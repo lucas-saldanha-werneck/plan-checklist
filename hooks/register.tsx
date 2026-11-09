@@ -1,7 +1,13 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register, ResolveInput } from 'claude-code'
+import type {
+  EngineInterface,
+  PlanChecklist as Checklist,
+  PlanPhase as Phase,
+  PlanTask as Task,
+  Register,
+  ResolveInput,
+} from 'claude-code'
 
-import type { Checklist, Phase, Task } from '../types'
 import { CONFIG_EXAMPLE } from './config-example'
 import {
   ENDED_EARLY,
@@ -12,6 +18,7 @@ import {
   SAID_NO,
   apiErrorSentence,
   applyReport,
+  checkReport,
   checkSteps,
   clampPercent,
   cleanName,
@@ -29,6 +36,8 @@ export const PANE = 'plan-checklist'
 export const STACK_PANE = 'side-stack'
 
 const checklistAtom = atom({ plugin: 'plan-checklist', key: 'checklist' } as const, null)
+// true while the checklist is drawn in the side-stack pane; side-stack reads it.
+const stackedAtom = atom({ plugin: 'plan-checklist', key: 'stacked' } as const, false)
 // Written by the side-stack host only; this mod reads it.
 const hostAtom = atom({ plugin: 'side-stack', key: 'present' } as const, false)
 
@@ -39,9 +48,19 @@ const FAILS_BEFORE_STUCK = 3
 const COLLAPSE_AFTER_MS = 5000
 // Plugin load order is unknown: look for the host soon after start, and once more a second later.
 const HOST_CHECKS_MS = [100, 1100]
+const PANE_COLUMNS = 46
+const STACKED_LINE = 'Shown in the Stack pane (/stack)'
 
-// Tools that run before a plan exists, even with require_plan_first on.
-const ALWAYS_ALLOWED = new Set(['ToolSearch', 'TodoWrite', 'TaskCreate', 'TaskUpdate', 'AskUserQuestion'])
+// Tools that run before a plan exists, even with require_plan_first on: tool
+// loading, to-do lists, questions, and the assumptions-pane mod's note tool.
+const ALWAYS_ALLOWED = new Set([
+  'ToolSearch',
+  'TodoWrite',
+  'TaskCreate',
+  'TaskUpdate',
+  'AskUserQuestion',
+  'mcp__assumptions-pane__log_assumption',
+])
 
 const PLACEHOLDER_STEPS = ['Understand your request', 'Plan the steps']
 
@@ -72,6 +91,13 @@ let idCounter = 0
 let lastErrorKind: string | null = null
 let optionRequirePlanFirst = false
 let fileRequirePlanFirst: boolean | null = null
+// The gate as read at session start. It stays fixed for the session, so the
+// system prompt and the gate always agree; a changed file applies next session.
+let sessionRequirePlanFirst = false
+// The side-stack pane: true once drawn, false once closed, null when not known.
+let stackShown: boolean | null = null
+// Running /stack failed: the own pane shows the full checklist instead.
+let stackUnreachable = false
 
 const makeId = (): string => `s${Date.now().toString(36)}${(idCounter++).toString(36)}`
 
@@ -80,7 +106,7 @@ function toolName($: EngineInterface, name: string): string {
 }
 
 function requirePlanFirst(): boolean {
-  return fileRequirePlanFirst ?? optionRequirePlanFirst
+  return sessionRequirePlanFirst
 }
 
 // ---- Settings file -------------------------------------------------------
@@ -131,9 +157,15 @@ async function loadSettings($: EngineInterface): Promise<void> {
 
 // ---- The side-stack host and the pane ------------------------------------
 
-async function isStacked($: EngineInterface): Promise<boolean> {
+/**
+ * side-stack counts as there only when its flag is true AND its /stack command
+ * is listed: a flag left over from an unloaded or disabled host is not enough.
+ */
+async function hostPresent($: EngineInterface): Promise<boolean> {
   try {
-    return (await read($, hostAtom)) === true
+    if ((await read($, hostAtom)) !== true) return false
+    const commands = await $.command.list()
+    return commands.some(c => c.name === 'stack' && c.plugin?.split('@')[0] === 'side-stack')
   } catch {
     return false
   }
@@ -148,49 +180,86 @@ async function hasSurface($: EngineInterface): Promise<boolean> {
   }
 }
 
-async function isPaneOpen($: EngineInterface): Promise<boolean> {
+async function ownPane($: EngineInterface): Promise<{ title: string } | undefined> {
   try {
-    return (await $.ui.panes()).some(pane => pane.id === PANE)
+    return (await $.ui.panes()).find(pane => pane.id === PANE)
   } catch {
-    return false
+    return undefined
   }
 }
 
-/** Opens this mod's own pane, unless the side-stack host is there (its pane shows the section). */
-async function openPane($: EngineInterface, focus = false): Promise<void> {
-  if (await isStacked($)) return
+/** Opens (or retitles) the own pane, always with its width so the dock keeps it. */
+async function openOwn($: EngineInterface, focus = false): Promise<void> {
   if (!(await hasSurface($))) return
-  const list = await read($, checklistAtom)
+  const title = planTitle(await read($, checklistAtom))
   try {
-    await $.ui.open({ id: PANE, title: planTitle(list), columns: 46, ...(focus ? { focus: true as const } : {}) })
+    await $.ui.open({ id: PANE, title, columns: PANE_COLUMNS, ...(focus ? { focus: true as const } : {}) })
   } catch {
     // The surface said no; the checklist still updates.
   }
 }
 
-/** Keeps the tab title in step with the checklist ("Plan 2/4"), while the own pane is open. */
-async function syncTitle($: EngineInterface): Promise<void> {
-  if (await isStacked($)) return
-  if (!(await isPaneOpen($))) return
-  const title = planTitle(await read($, checklistAtom))
-  try {
-    const pane = (await $.ui.panes()).find(one => one.id === PANE)
-    if (pane !== undefined && pane.title === title) return
-    await $.ui.open({ id: PANE, title })
-  } catch {
-    // Not retitled; the next change tries again.
+/**
+ * Looks for side-stack again and follows it: publishes `stacked`, closes the own
+ * pane when the host is there, and brings the own pane back when the host left.
+ * Returns whether the checklist is drawn in the side-stack pane.
+ */
+async function checkHost($: EngineInterface): Promise<boolean> {
+  const now = await hostPresent($)
+  const was = (await read($, stackedAtom)) === true
+  if (now !== was) await update($, stackedAtom, () => now)
+  if (now && !stackUnreachable) {
+    if ((await ownPane($)) !== undefined) {
+      try {
+        await $.ui.close({ id: PANE })
+      } catch {
+        // Left open; it draws one line pointing at the Stack pane.
+      }
+    }
+  } else if (!now && was && (await read($, checklistAtom)) !== null) {
+    stackShown = null
+    await openOwn($)
   }
+  return now
 }
 
-/** The host turned up: close the own pane, the section now shows in the host's pane. */
-async function checkHost($: EngineInterface): Promise<void> {
-  if (!(await isStacked($))) return
-  if (!(await isPaneOpen($))) return
-  try {
-    await $.ui.close({ id: PANE })
-  } catch {
-    // Left open.
+/**
+ * Asks side-stack to show its pane by running its /stack command. The run waits
+ * until the session is idle and is refused inside a hook the turn waits on, so it
+ * runs from a timer. If it fails, the own pane shows the full checklist instead.
+ */
+function bringStackForward($: EngineInterface): void {
+  $.clock.after(0, () => {
+    void (async () => {
+      try {
+        await $.command.run({ command: 'stack' })
+        stackUnreachable = false
+        stackShown = true
+      } catch {
+        stackUnreachable = true
+        await openOwn($)
+      }
+    })()
+  })
+}
+
+/** Makes the checklist visible: the Stack pane when side-stack runs, else the own pane. */
+async function showChecklist($: EngineInterface, asked = false): Promise<'stack' | 'own'> {
+  if (await checkHost($)) {
+    if (asked || stackShown !== true) bringStackForward($)
+    return 'stack'
   }
+  await openOwn($, asked)
+  return 'own'
+}
+
+/** Keeps the tab title in step with the checklist ("Plan 2/4"), while the own pane is open. */
+async function syncTitle($: EngineInterface): Promise<void> {
+  if ((await checkHost($)) && !stackUnreachable) return
+  const pane = await ownPane($)
+  if (pane === undefined) return
+  if (pane.title === planTitle(await read($, checklistAtom))) return
+  await openOwn($)
 }
 
 // ---- Checklist changes ---------------------------------------------------
@@ -252,7 +321,7 @@ async function startJob($: EngineInterface, text: string): Promise<void> {
     isCollapsed: false,
   }
   await update($, checklistAtom, () => list)
-  await openPane($)
+  await showChecklist($)
   await syncTitle($)
 }
 
@@ -407,6 +476,9 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     await seedSettings($)
     await loadSettings($)
+    sessionRequirePlanFirst = fileRequirePlanFirst ?? optionRequirePlanFirst
+    stackShown = null
+    stackUnreachable = false
     await $.tool.register({
       name: 'plan_steps',
       description:
@@ -429,7 +501,7 @@ export const register: Register = (on, options) => {
     await $.tool.register({
       name: 'report_progress',
       description:
-        'Report real progress on the current step: its plain-English name and a percent from 0 to 100. Send 100 the moment a step finishes; the next step then starts. A name that is not in the plan becomes a new step.',
+        'Report real progress on the current step: its plain-English name and a percent from 0 to 100. Send 100 the moment a step finishes; the next step then starts. The name must be one of the planned steps; an unknown name is refused with the list of planned names.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -458,9 +530,8 @@ export const register: Register = (on, options) => {
   })
 
   on('command.run', { command: 'checklist' }, async $ => {
-    if (await isStacked($)) return { text: 'The checklist is in the side-stack pane.' }
-    await openPane($, true)
-    return { text: 'Checklist opened.' }
+    const where = await showChecklist($, true)
+    return { text: where === 'stack' ? 'The checklist is in the Stack pane; opening it.' : 'Checklist opened.' }
   })
 
   on('prompt.submit', async ($, e, next) => {
@@ -475,7 +546,6 @@ export const register: Register = (on, options) => {
     lastSubmitWasCommand = false
     const text = e.text.trim()
     if (text === '' || wasCommand || text.startsWith('/')) return next(e)
-    await loadSettings($)
     const list = await read($, checklistAtom)
     if (list !== null && (list.phase === 'working' || list.phase === 'needsYou')) {
       if (list.phase === 'needsYou') await setPhase($, 'working')
@@ -487,9 +557,17 @@ export const register: Register = (on, options) => {
 
   // The two tools, the optional plan gate, to-do lists, questions and failures.
   on('tool.call', async ($, e, next) => {
-    if (e.agentId !== undefined) return next(e)
     const tool = String(e.tool)
     const input = e as unknown as Record<string, unknown>
+
+    // A subagent's plan is not shown: answer its plan tools so the call does not
+    // fall through to a tool nobody else serves, and change nothing.
+    if (e.agentId !== undefined) {
+      if (tool === toolName($, 'plan_steps') || tool === toolName($, 'report_progress')) {
+        return { result: "Noted. Only the main conversation's plan is shown on the checklist; no need to plan or report from a subagent." }
+      }
+      return next(e)
+    }
 
     if (tool === toolName($, 'plan_steps')) {
       const checked = checkSteps(input.steps)
@@ -501,13 +579,14 @@ export const register: Register = (on, options) => {
     }
 
     if (tool === toolName($, 'report_progress')) {
-      const name = cleanName(String(input.task ?? ''))
+      const current = await read($, checklistAtom)
+      const checked = checkReport(current?.tasks ?? [], current?.isPlanned === true, input.task)
+      if ('error' in checked) return { deny: checked.error }
+      const name = checked.name
       const percent = clampPercent(input.percent)
-      await ensureJob($)
       await change($, list => ({
         ...list,
-        tasks: settle(applyReport(list.isPlanned ? list.tasks : [], name, percent, makeId)),
-        isPlanned: true,
+        tasks: settle(applyReport(list.tasks, name, percent, makeId)),
         phase: list.phase === 'stuck' || list.phase === 'needsYou' ? 'working' : list.phase,
         needsYouReason: null,
         stuckReason: null,
@@ -621,6 +700,21 @@ export const register: Register = (on, options) => {
     return next(e)
   }).catch(($, e, next) => next(e))
 
+  // A /clear ends the conversation; no session.start follows it. The old plan
+  // goes with it, so the checklist empties; tools, command and settings stay.
+  on('session.end', async ($, e, next) => {
+    const result = await next(e)
+    if (e.reason === 'clear') {
+      collapseTimer?.cancel()
+      collapseTimer = null
+      failStreak = 0
+      lastErrorKind = null
+      await update($, checklistAtom, () => null)
+      await syncTitle($).catch(() => undefined)
+    }
+    return result
+  })
+
   on('turn.complete', async ($, e, next) => {
     const result = await next(e)
     if (e.agentId !== undefined) return result
@@ -645,14 +739,28 @@ export const register: Register = (on, options) => {
   })
 
   // Alone: the own pane.
+  // While stacked it only points at the Stack pane, so the list never shows twice.
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
+    if ((await read($, stackedAtom)) === true && !stackUnreachable) {
+      const { Text } = $.ui.resolve(e)
+      return <Text dimColor>{STACKED_LINE}</Text>
+    }
     return drawChecklist($, e, Math.max(20, e.props.bodyColumns))
   })
+
+  // The side-stack pane closing: the next plan brings it forward again. Only
+  // watched; the close always goes on.
+  on('ui.close', { id: STACK_PANE }, async ($, e, next) => {
+    const result = await next(e)
+    stackShown = false
+    return result
+  }).catch(($, e, next) => next(e))
 
   // With the side-stack host: a section in its shared pane, then every other section beneath.
   on('ui.render', { component: 'Pane', requestId: STACK_PANE }, async ($, e, next) => {
     const { Box } = $.ui.resolve(e)
     const below = await next(e)
+    stackShown = true
     let section
     try {
       section = await drawChecklist($, e, Math.max(20, e.props.bodyColumns))

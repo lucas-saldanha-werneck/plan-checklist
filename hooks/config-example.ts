@@ -5,7 +5,7 @@
 // is already there is never rewritten.
 export const CONFIG_EXAMPLE = `{
   "_doc": {
-    "about": "Your plan-checklist settings. Plugin updates never touch this file. null means the default. Keys that start with _ are ignored. Changes apply from the next prompt.",
+    "about": "Your plan-checklist settings. Plugin updates never touch this file. null means the default. Keys that start with _ are ignored. Changes apply from the next session (a new session, not /clear).",
     "require_plan_first": "true: every other tool call is refused until Claude has called plan_steps for the request (subagents, ToolSearch, to-do tools and AskUserQuestion are never refused). false: never refused. null (default): use the require_plan_first option in /config, which is off unless you turn it on."
   },
   "require_plan_first": null

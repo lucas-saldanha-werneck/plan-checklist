@@ -1,32 +1,37 @@
-export type TaskStatus = 'done' | 'active' | 'upcoming'
-
-export type Task = {
-  id: string
-  name: string
-  status: TaskStatus
-  percent: number
-  hasReported: boolean
-}
-
-export type Phase = 'working' | 'needsYou' | 'stuck' | 'stopped' | 'done'
-
-export type Checklist = {
-  jobId: number
-  title: string
-  phase: Phase
-  tasks: Task[]
-  isPlanned: boolean
-  needsYouReason: string | null
-  stuckReason: string | null
-  startedAt: number
-  finishedAt: number | null
-  isCollapsed: boolean
-}
-
+// No top-level import or export here: this file stays a global declaration so
+// the `declare module` block merges into the API types. The hooks import the
+// checklist types from 'claude-code'.
 declare module 'claude-code' {
+  export type PlanTaskStatus = 'done' | 'active' | 'upcoming'
+
+  export type PlanTask = {
+    id: string
+    name: string
+    status: PlanTaskStatus
+    percent: number
+    hasReported: boolean
+  }
+
+  export type PlanPhase = 'working' | 'needsYou' | 'stuck' | 'stopped' | 'done'
+
+  export type PlanChecklist = {
+    jobId: number
+    title: string
+    phase: PlanPhase
+    tasks: PlanTask[]
+    isPlanned: boolean
+    needsYouReason: string | null
+    stuckReason: string | null
+    startedAt: number
+    finishedAt: number | null
+    isCollapsed: boolean
+  }
+
   interface PluginState {
-    'plan-checklist': { checklist: Checklist | null }
-    // Read only: the side-stack host sets this to true when it runs.
+    // checklist: the plan on screen. stacked: true while the checklist is drawn
+    // as a section of the side-stack pane (side-stack reads it).
+    'plan-checklist': { checklist: PlanChecklist | null; stacked: boolean }
+    // Read only: the side-stack host sets this to true when it starts.
     'side-stack': { present: boolean }
   }
 }

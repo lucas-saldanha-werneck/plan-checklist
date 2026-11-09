@@ -1,5 +1,5 @@
 // Pure checklist logic: no engine calls, so the tests can use it directly.
-import type { Checklist, Task } from '../types'
+import type { PlanChecklist as Checklist, PlanTask as Task } from 'claude-code'
 
 export const MIN_STEPS = 2
 export const MAX_STEPS = 8
@@ -145,7 +145,7 @@ export function planTitle(list: Checklist | null): string {
   }
 }
 
-/** Checks and cleans the steps handed to plan_steps: 2 to 8 names, or an error to send back. */
+/** Checks and cleans the steps handed to plan_steps: 2 to 8 different names, or an error to send back. */
 export function checkSteps(raw: unknown): { names: string[] } | { error: string } {
   const list = Array.isArray(raw) ? raw : []
   const names = list.map(step => String(step ?? '').trim()).filter(step => step !== '').map(cleanName)
@@ -154,5 +154,32 @@ export function checkSteps(raw: unknown): { names: string[] } | { error: string 
       error: `plan_steps needs ${MIN_STEPS} to ${MAX_STEPS} step names; it got ${names.length}. Send every step of the job again, in order, as short plain-English names that start with a verb.`,
     }
   }
+  const twice = names.filter((name, i) => names.findIndex(other => sameName(other, name)) !== i)
+  if (twice.length > 0) {
+    return {
+      error: `Two steps read the same once code and paths are taken out ("${twice[0]}"). Give every step its own plain-English name and send the whole list again.`,
+    }
+  }
   return { names }
+}
+
+/**
+ * Finds the planned step a report_progress call names. An empty or unknown name
+ * is an error that lists the planned steps; nothing on the checklist changes.
+ */
+export function checkReport(tasks: Task[], isPlanned: boolean, rawName: unknown): { name: string } | { error: string } {
+  const raw = String(rawName ?? '').trim()
+  if (!isPlanned || tasks.length === 0) {
+    return { error: 'There is no plan yet. Call plan_steps first with every step of the job, then report progress on those steps.' }
+  }
+  const planned = tasks.map(task => `"${task.name}"`).join(', ')
+  if (raw === '') return { error: `report_progress needs the step's name. The planned steps are: ${planned}.` }
+  const name = cleanName(raw)
+  const found = tasks.find(task => sameName(task.name, name) || sameName(task.name, raw))
+  if (found === undefined) {
+    return {
+      error: `"${raw}" is not a step in the plan. Use one of the planned names: ${planned}. If the plan changed, call plan_steps again with the full new list.`,
+    }
+  }
+  return { name: found.name }
 }
