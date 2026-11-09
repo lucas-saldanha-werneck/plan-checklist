@@ -183,3 +183,38 @@ export function checkReport(tasks: Task[], isPlanned: boolean, rawName: unknown)
   }
   return { name: found.name }
 }
+
+/** The key of this mod's section in the side-stack pane, and of the host's empty slot for it. */
+export const SECTION_KEY = 'side-stack:plan-checklist'
+export const SLOT_KEY = 'side-stack:slot:plan-checklist'
+
+type Node = { type?: unknown; props?: Record<string, unknown>; children?: unknown }
+
+function keyOf(node: unknown): unknown {
+  return node !== null && typeof node === 'object' ? (node as Node).props?.key : undefined
+}
+
+/**
+ * Returns a copy of the drawing with side-stack's empty slot for this mod
+ * replaced by `section`, or undefined when the drawing has no such slot (the
+ * host is not beneath, or has no order for this mod). Nothing is changed in place.
+ */
+export function fillSlot(node: unknown, section: unknown): unknown {
+  if (keyOf(node) === SLOT_KEY) return section
+  if (Array.isArray(node)) {
+    for (let i = 0; i < node.length; i++) {
+      const swapped = fillSlot(node[i], section)
+      if (swapped !== undefined) {
+        const copy = [...node]
+        copy[i] = swapped
+        return copy
+      }
+    }
+    return undefined
+  }
+  if (node === null || typeof node !== 'object') return undefined
+  const el = node as Node
+  if (el.children === undefined) return undefined
+  const children = fillSlot(el.children, section)
+  return children === undefined ? undefined : { ...el, children }
+}

@@ -101,8 +101,12 @@ new session start):
 
 - side-stack running: no pane of its own (it closes one it had opened, or shows one line there,
   "Shown in the Stack pane (/stack)", so the list never shows twice). The checklist is a section of
-  the side-stack pane, headed `Plan 2/4`, with the other mods' sections beneath or above it. The
-  order follows the order Claude Code loads the plugins in, which a mod cannot choose.
+  the side-stack pane, headed `Plan 2/4`, with the other mods' sections (assumptions-pane,
+  idea-shelf, clean-view) beneath or above it. side-stack decides the order: install order by
+  default, changeable with `/stack order`. plan-checklist draws its section keyed
+  `side-stack:plan-checklist` and puts it in the empty slot side-stack leaves for it
+  (`side-stack:slot:plan-checklist`); with an older side-stack that leaves no slot, the section goes
+  on top of the ones loaded after it.
 - A new plan or `/checklist` runs `/stack` to bring the Stack pane forward when plan-checklist does
   not know it to be open. Claude Code runs a plugin's command once the session is idle, so during a
   turn the Stack pane may come up only when Claude finishes. If `/stack` is refused, the own pane

@@ -44,6 +44,8 @@ type Setup = {
   stackRunFails?: boolean
   /** The surface the session starts on. */
   surface?: Surface
+  /** side-stack beneath orders the sections and leaves an empty slot for plan-checklist between two others. */
+  slot?: boolean
 }
 
 type Surface = 'terminal' | 'desktop'
@@ -181,8 +183,19 @@ async function boot($: Engine, on: On, setup: Setup = {}): Promise<World> {
   on('ui.panes', async () => ({ value: [...panes].map(([id, title]) => ({ id, title, isPlaced: true })) as never }))
   // The host's own part of its pane, beneath this mod's section.
   on('ui.render', { component: 'Pane', requestId: 'side-stack' }, ($, e) => {
-    const { Text } = $.ui.resolve(e)
-    return <Text>HOST-AND-OTHERS</Text>
+    const { Box, Text } = $.ui.resolve(e)
+    if (setup.slot !== true) return <Text>HOST-AND-OTHERS</Text>
+    return (
+      <Box flexDirection="column">
+        <Box key="side-stack:other-above">
+          <Text>OTHER-ABOVE</Text>
+        </Box>
+        <Box key="side-stack:slot:plan-checklist" />
+        <Box key="side-stack:other-below">
+          <Text>OTHER-BELOW</Text>
+        </Box>
+      </Box>
+    )
   })
   await $.session.start({ cwd: '/work', surface: setup.surface ?? 'terminal', isInteractive: true })
   return world
@@ -551,6 +564,39 @@ for (const surface of SURFACES) {
         expect(texts.join('\n')).toContain('Write the footer')
         expect(texts.join('\n')).not.toContain('Read your notes')
         expect(texts.some(t => t.includes('HOST-AND-OTHERS'))).toBe(true)
+      })
+    })
+
+    describe('section order (protocol v4)', () => {
+      test('side-stack leaves a slot: the section fills it, between the others', { plugins: [HOST] }, async ($, on) => {
+        const world = await boot($, on, { surface, slot: true })
+        await startJob($)
+        await call($, { tool: PLAN, steps: ['Read your notes', 'Build the page'] })
+        expect(world.opened.filter(one => one.startsWith('plan-checklist:'))).toEqual([])
+        const texts = await paneTexts($, STACK_PANE, surface)
+        const above = texts.indexOf('OTHER-ABOVE')
+        const heading = texts.indexOf('Plan 0/2')
+        const below = texts.indexOf('OTHER-BELOW')
+        expect(above).toBe(0)
+        expect(heading > above).toBe(true)
+        expect(below > heading).toBe(true)
+        expect(texts.filter(t => t === 'Plan 0/2').length).toBe(1)
+        const ui = await $.ui.mount({ plugin: 'plan-checklist', surface, ...STACK_PANE })
+        expect(await ui.find({ key: 'side-stack:plan-checklist' })).toBeDefined()
+        expect(await ui.find({ key: 'side-stack:slot:plan-checklist' })).toBeUndefined()
+        await ui.unmount()
+      })
+
+      test('no slot: the keyed section goes on top, as before', { plugins: [HOST] }, async ($, on) => {
+        await boot($, on, { surface })
+        await startJob($)
+        await call($, { tool: PLAN, steps: ['Read your notes', 'Build the page'] })
+        const texts = await paneTexts($, STACK_PANE, surface)
+        expect(texts[0]).toBe('Plan 0/2')
+        expect(texts.indexOf('HOST-AND-OTHERS') > 0).toBe(true)
+        const ui = await $.ui.mount({ plugin: 'plan-checklist', surface, ...STACK_PANE })
+        expect(await ui.find({ key: 'side-stack:plan-checklist' })).toBeDefined()
+        await ui.unmount()
       })
     })
  })

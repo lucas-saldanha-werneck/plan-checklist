@@ -14,6 +14,7 @@ import {
   HAS_QUESTION,
   KEEPS_FAILING,
   NEEDS_OK,
+  SECTION_KEY,
   REFUSED,
   SAID_NO,
   apiErrorSentence,
@@ -23,6 +24,7 @@ import {
   clampPercent,
   cleanName,
   errorKind,
+  fillSlot,
   formatDuration,
   isUserRejection,
   newTask,
@@ -800,9 +802,18 @@ export const register: Register = (on, options) => {
       // A broken section must never hide the others.
       return below
     }
+    // side-stack orders the sections: it leaves an empty slot keyed for this mod
+    // where it wants the section. With no slot, the section goes on top as before.
+    const keyed = (
+      <Box key={SECTION_KEY} flexDirection="column">
+        {section}
+      </Box>
+    )
+    const filled = fillSlot(below, keyed)
+    if (filled !== undefined) return filled as typeof below
     return (
       <Box flexDirection="column">
-        {section}
+        {keyed}
         {below}
       </Box>
     )
