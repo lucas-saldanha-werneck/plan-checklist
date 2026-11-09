@@ -1,0 +1,15 @@
+{
+  "name": "plan-checklist",
+  "description": "A side pane where Claude shows its plan as a checklist and ticks steps off as it works.",
+  "owner": {
+    "name": "Lucas Saldanha Werneck",
+    "url": "https://github.com/lucas-saldanha-werneck"
+  },
+  "plugins": [
+    {
+      "name": "plan-checklist",
+      "source": "./",
+      "description": "Claude lays out its plan as a short checklist in a side pane and ticks each step off as it works. Works alone or inside side-stack."
+    }
+  ]
+}

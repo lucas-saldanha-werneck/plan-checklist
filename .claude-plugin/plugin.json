@@ -1,0 +1,22 @@
+{
+  "name": "plan-checklist",
+  "version": "0.1.0",
+  "description": "Claude lays out its plan as a short checklist in a side pane and ticks each step off as it works. Works alone or inside side-stack.",
+  "author": {
+    "name": "Lucas Saldanha Werneck",
+    "url": "https://github.com/lucas-saldanha-werneck"
+  },
+  "homepage": "https://github.com/lucas-saldanha-werneck/plan-checklist",
+  "repository": "https://github.com/lucas-saldanha-werneck/plan-checklist",
+  "license": "MIT",
+  "keywords": ["mod", "pane", "plan", "checklist", "progress"],
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "require_plan_first": {
+      "type": "boolean",
+      "title": "Require a plan first",
+      "description": "Refuse every other tool call until Claude has called plan_steps for the request. Off by default. The require_plan_first key in ~/.config/plan-checklist/config.json, when true or false, wins over this.",
+      "default": false
+    }
+  }
+}
