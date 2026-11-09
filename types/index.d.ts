@@ -31,7 +31,8 @@ declare module 'claude-code' {
     // checklist: the plan on screen. stacked: true while the checklist is drawn
     // as a section of the side-stack pane (side-stack reads it).
     'plan-checklist': { checklist: PlanChecklist | null; stacked: boolean }
-    // Read only: the side-stack host sets this to true when it starts.
+    // side-stack's own flag. plan-checklist does not read it (it is session
+    // state, gone after /clear); declared so the tests' stand-in host can set it.
     'side-stack': { present: boolean }
   }
 }

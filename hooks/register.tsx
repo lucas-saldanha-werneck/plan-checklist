@@ -38,8 +38,6 @@ export const STACK_PANE = 'side-stack'
 const checklistAtom = atom({ plugin: 'plan-checklist', key: 'checklist' } as const, null)
 // true while the checklist is drawn in the side-stack pane; side-stack reads it.
 const stackedAtom = atom({ plugin: 'plan-checklist', key: 'stacked' } as const, false)
-// Written by the side-stack host only; this mod reads it.
-const hostAtom = atom({ plugin: 'side-stack', key: 'present' } as const, false)
 
 const METER = 10
 const LABEL_COLUMNS = 7
@@ -98,6 +96,9 @@ let sessionRequirePlanFirst = false
 let stackShown: boolean | null = null
 // Running /stack failed: the own pane shows the full checklist instead.
 let stackUnreachable = false
+// The session id this module last set up under. A /clear goes on under a new
+// id with no session.start, and session $.state (including `stacked`) is gone.
+let loadedSessionId: string | null = null
 
 const makeId = (): string => `s${Date.now().toString(36)}${(idCounter++).toString(36)}`
 
@@ -158,12 +159,11 @@ async function loadSettings($: EngineInterface): Promise<void> {
 // ---- The side-stack host and the pane ------------------------------------
 
 /**
- * side-stack counts as there only when its flag is true AND its /stack command
- * is listed: a flag left over from an unloaded or disabled host is not enough.
+ * side-stack counts as there when its /stack command is listed, and only then.
+ * Its `present` flag is session state, gone after a /clear, so it is not read.
  */
 async function hostPresent($: EngineInterface): Promise<boolean> {
   try {
-    if ((await read($, hostAtom)) !== true) return false
     const commands = await $.command.list()
     return commands.some(c => c.name === 'stack' && c.plugin?.split('@')[0] === 'side-stack')
   } catch {
@@ -260,6 +260,29 @@ async function syncTitle($: EngineInterface): Promise<void> {
   if (pane === undefined) return
   if (pane.title === planTitle(await read($, checklistAtom))) return
   await openOwn($)
+}
+
+/**
+ * After a /clear the session id changes and no session.start fires: start over
+ * on the pane bookkeeping, look for side-stack again and re-publish `stacked`.
+ * The checklist itself is not stored; session.end already emptied it.
+ */
+async function followSession($: EngineInterface): Promise<void> {
+  let id: string
+  try {
+    id = await $.session.id()
+  } catch {
+    return
+  }
+  if (id === loadedSessionId) return
+  const isFirst = loadedSessionId === null
+  loadedSessionId = id
+  if (isFirst) return
+  stackShown = null
+  stackUnreachable = false
+  const now = await hostPresent($)
+  await update($, stackedAtom, () => now)
+  await checkHost($)
 }
 
 // ---- Checklist changes ---------------------------------------------------
@@ -479,6 +502,7 @@ export const register: Register = (on, options) => {
     sessionRequirePlanFirst = fileRequirePlanFirst ?? optionRequirePlanFirst
     stackShown = null
     stackUnreachable = false
+    loadedSessionId = await $.session.id().catch(() => null)
     await $.tool.register({
       name: 'plan_steps',
       description:
@@ -530,11 +554,13 @@ export const register: Register = (on, options) => {
   })
 
   on('command.run', { command: 'checklist' }, async $ => {
+    await followSession($)
     const where = await showChecklist($, true)
     return { text: where === 'stack' ? 'The checklist is in the Stack pane; opening it.' : 'Checklist opened.' }
   })
 
   on('prompt.submit', async ($, e, next) => {
+    await followSession($)
     lastSubmitWasCommand = e.command !== undefined
     return next(e)
   }).catch(($, e, next) => next(e))
@@ -542,6 +568,7 @@ export const register: Register = (on, options) => {
   // A real prompt while nothing runs starts a job; a reply clears "Needs you".
   on('turn.start', async ($, e, next) => {
     if (e.agentId !== undefined) return next(e)
+    await followSession($)
     const wasCommand = lastSubmitWasCommand
     lastSubmitWasCommand = false
     const text = e.text.trim()
@@ -568,6 +595,8 @@ export const register: Register = (on, options) => {
       }
       return next(e)
     }
+
+    if (tool === toolName($, 'plan_steps') || tool === toolName($, 'report_progress')) await followSession($)
 
     if (tool === toolName($, 'plan_steps')) {
       const checked = checkSteps(input.steps)
@@ -741,6 +770,8 @@ export const register: Register = (on, options) => {
   // Alone: the own pane.
   // While stacked it only points at the Stack pane, so the list never shows twice.
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
+    // A render may not write state: a session change is followed from a timer.
+    $.clock.after(0, () => void followSession($).catch(() => undefined))
     if ((await read($, stackedAtom)) === true && !stackUnreachable) {
       const { Text } = $.ui.resolve(e)
       return <Text dimColor>{STACKED_LINE}</Text>
@@ -761,6 +792,7 @@ export const register: Register = (on, options) => {
     const { Box } = $.ui.resolve(e)
     const below = await next(e)
     stackShown = true
+    $.clock.after(0, () => void followSession($).catch(() => undefined))
     let section
     try {
       section = await drawChecklist($, e, Math.max(20, e.props.bodyColumns))

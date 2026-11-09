@@ -72,8 +72,8 @@ desktop app's local Code sessions.
   pane instead.
 - When every step is done and the turn ends, the list shows "All done" and shrinks to one line after
   5 seconds. The next prompt starts a new plan.
-- `/clear` empties the checklist; the next prompt starts a new one. Nothing is saved between
-  sessions.
+- `/clear` empties the checklist; the next prompt starts a new one, in the same place (the Stack
+  pane when side-stack runs). Nothing is saved between sessions.
 
 ## Settings
 
@@ -93,10 +93,11 @@ the file wins over it.
 ## Works alone or inside side-stack
 
 Claude Code shows separate panes as tabs, one at a time. The side-stack mod opens one shared pane so
-several mods can draw in it one under the other. plan-checklist counts side-stack as running only
-when side-stack's flag says so AND its `/stack` command is listed, so a flag left over from a
-disabled host does not hide the checklist. It looks again at session start, a second later, and on
-every change to the checklist:
+several mods can draw in it one under the other. plan-checklist counts side-stack as running when
+side-stack's `/stack` command is listed, and only then (side-stack's own flag is session state and
+is gone after `/clear`, so it is not used). It looks again at session start, a second later, on
+every change to the checklist, and after a `/clear` (which goes on under a new session id without a
+new session start):
 
 - side-stack running: no pane of its own (it closes one it had opened, or shows one line there,
   "Shown in the Stack pane (/stack)", so the list never shows twice). The checklist is a section of

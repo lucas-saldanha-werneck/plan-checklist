@@ -1,6 +1,6 @@
 {
   "name": "plan-checklist",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Claude lays out its plan as a short checklist in a side pane and ticks each step off as it works. Works alone or inside side-stack.",
   "author": {
     "name": "Lucas Saldanha Werneck",

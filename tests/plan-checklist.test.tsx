@@ -79,6 +79,17 @@ const LATE_HOST: Plugin = {
   },
 }
 
+/** The host as seen after a /clear: /stack is listed, its session flag is gone. */
+const COMMAND_ONLY_HOST: Plugin = {
+  name: 'side-stack',
+  register: on => {
+    on('session.start', async ($, e, next) => {
+      await $.command.register({ name: 'stack', description: 'Open the Stack side pane' })
+      return next(e)
+    })
+  },
+}
+
 /** A flag left standing with no /stack command: the host is not really there. */
 const STALE_HOST: Plugin = {
   name: 'side-stack',
@@ -506,5 +517,41 @@ for (const surface of SURFACES) {
       expect(all).not.toContain('Read your notes')
     })
   })
+
+    describe('after /clear (protocol v3)', () => {
+      test('the /stack command alone means side-stack is there', { plugins: [COMMAND_ONLY_HOST, READER] }, async ($, on) => {
+        const world = await boot($, on, { surface })
+        await startJob($)
+        await call($, { tool: PLAN, steps: ['Read your notes', 'Build the page'] })
+        expect(world.opened.filter(one => one.startsWith('plan-checklist:'))).toEqual([])
+        expect(await stackedFlag($)).toBe('true')
+        expect((await paneTexts($, STACK_PANE, surface))[0]).toBe('Plan 0/2')
+      })
+
+      test('/clear, new session id, no session.start, a prompt: the plan is back in the stack', { plugins: [COMMAND_ONLY_HOST, READER] }, async ($, on) => {
+        let sid = 's1'
+        on('session.id', async () => ({ value: sid }) as never)
+        on('session.end', (_$, e) => ({ sessionId: e.sessionId }) as never)
+        const world = await boot($, on, { surface })
+        await startJob($)
+        await call($, { tool: PLAN, steps: ['Read your notes', 'Build the page'] })
+        await paneTexts($, STACK_PANE, surface)
+        await world.clock.advance(1)
+        const runsBefore = world.ran.filter(c => c === 'stack').length
+        await $.session.end({ reason: 'clear', sessionId: 's1', resume: {} } as never)
+        sid = 's2'
+        await $.turn.start({ text: 'Now add a footer', turnId: 't2' })
+        await call($, { tool: PLAN, steps: ['Write the footer', 'Check it'] })
+        await world.clock.advance(1)
+        expect(world.ran.filter(c => c === 'stack').length > runsBefore).toBe(true)
+        expect(await stackedFlag($)).toBe('true')
+        expect(world.opened.filter(one => one.startsWith('plan-checklist:'))).toEqual([])
+        const texts = await paneTexts($, STACK_PANE, surface)
+        expect(texts[0]).toBe('Plan 0/2')
+        expect(texts.join('\n')).toContain('Write the footer')
+        expect(texts.join('\n')).not.toContain('Read your notes')
+        expect(texts.some(t => t.includes('HOST-AND-OTHERS'))).toBe(true)
+      })
+    })
  })
 }
