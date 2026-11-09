@@ -9,7 +9,7 @@
     {
       "name": "plan-checklist",
       "source": "./",
-      "description": "Claude lays out its plan as a short checklist in a side pane and ticks each step off as it works. Works alone or inside side-stack."
+      "description": "Claude's plan as a checklist in a side pane, ticked off as it works."
     }
   ]
 }

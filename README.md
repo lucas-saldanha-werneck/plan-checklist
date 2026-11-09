@@ -48,16 +48,8 @@ If the session uses TodoWrite or the task tools, the to-do list is shown as the 
 At the prompt of a terminal Claude Code session:
 
 ```
+/plugin marketplace add lucas-saldanha-werneck/claude-plugins
 /plugin install plan-checklist@lucas-plugins
-```
-
-If you have not added the `lucas-plugins` marketplace yet, add it first with
-`/plugin marketplace add lucas-saldanha-werneck/claude-plugins`. You can also install from this repo
-alone:
-
-```
-/plugin marketplace add lucas-saldanha-werneck/plan-checklist
-/plugin install plan-checklist@plan-checklist
 ```
 
 From a shell, the same commands work with `claude plugin` in place of `/plugin`. `/plugin` does not
@@ -114,19 +106,6 @@ new session start):
 - plan-checklist publishes `stacked` (true while it draws in the Stack pane) for side-stack to read.
 - side-stack not running, or gone: its own pane again.
 
-## Changes from the mod it comes from
-
-This is the plan checklist part of a larger private mod (see Credits). It behaves differently in a
-few places:
-
-- `plan_steps` refuses 1 step or more than 8. The original took 1 to 8 and cut any extra steps.
-- `report_progress` refuses a step name that is not in the plan. The original added it as a new
-  step.
-- The original asked a small model (Haiku) for a short job title on every prompt. This one uses the
-  first line of your prompt, so it makes no model calls of its own.
-- "Plan first" is an option, off by default. In the original it was always on.
-- The original also hid tool lines from the transcript. That is not part of this mod.
-
 ## Terminal and desktop app
 
 The same code draws in both, and every test runs on both surfaces. What differs is Claude Code's
@@ -145,7 +124,7 @@ own pane handling:
 /plugin uninstall plan-checklist@lucas-plugins
 ```
 
-## Limits and what was not tested
+## Limits
 
 - Built and tested on Claude Code 2.1.319. It needs a version with mods (hooks modules).
 - The tests run every case on the `terminal` and `desktop` surfaces, with and without a stand-in for
