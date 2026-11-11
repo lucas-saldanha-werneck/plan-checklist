@@ -98,6 +98,10 @@ let sessionRequirePlanFirst = false
 let stackShown: boolean | null = null
 // Running /stack failed: the own pane shows the full checklist instead.
 let stackUnreachable = false
+// The person's last prompt came through Remote Control (phone or claude.ai), where no side pane
+// shows: a /stack run there would only wait in the chat as a queued prompt. Set from the origin of
+// prompts the person sends (composer = typed here, bridge = Remote Control); other origins leave it.
+let lastPromptFromRemote = false
 // The session id this module last set up under. A /clear goes on under a new
 // id with no session.start, and session $.state (including `stacked`) is gone.
 let loadedSessionId: string | null = null
@@ -248,7 +252,8 @@ function bringStackForward($: EngineInterface): void {
 /** Makes the checklist visible: the Stack pane when side-stack runs, else the own pane. */
 async function showChecklist($: EngineInterface, asked = false): Promise<'stack' | 'own'> {
   if (await checkHost($)) {
-    if (asked || stackShown !== true) bringStackForward($)
+    // From Remote Control the pane cannot show, so only an explicit /checklist runs /stack.
+    if (asked || (stackShown !== true && !lastPromptFromRemote)) bringStackForward($)
     return 'stack'
   }
   await openOwn($, asked)
@@ -564,6 +569,9 @@ export const register: Register = (on, options) => {
   on('prompt.submit', async ($, e, next) => {
     await followSession($)
     lastSubmitWasCommand = e.command !== undefined
+    const kind = (e as { origin?: { kind?: string } }).origin?.kind
+    if (kind === 'bridge') lastPromptFromRemote = true
+    else if (kind === 'composer') lastPromptFromRemote = false
     return next(e)
   }).catch(($, e, next) => next(e))
 
