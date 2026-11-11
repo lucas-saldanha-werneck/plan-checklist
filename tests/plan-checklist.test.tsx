@@ -432,6 +432,28 @@ for (const surface of SURFACES) {
       expect(await paneTexts($, OWN_PANE, surface)).toEqual(['Shown in the Stack pane (/stack)'])
     })
 
+    test('from Remote Control a new plan does not run /stack; /checklist still does', { plugins: [HOST, READER] }, async ($, on) => {
+      on('prompt.submit', async (_$, e) => ({ text: e.text }))
+      const world = await boot($, on, { surface })
+      await $.prompt.submit({ text: 'Build my landing page', origin: { kind: 'bridge' } } as never)
+      await startJob($)
+      await world.clock.advance(1)
+      expect(world.ran).toEqual([])
+      await $.command.run({ command: 'checklist', args: '' } as never)
+      await world.clock.advance(1)
+      expect(world.ran).toEqual(['stack'])
+    })
+
+    test('a prompt typed here after one from Remote Control runs /stack again', { plugins: [HOST, READER] }, async ($, on) => {
+      on('prompt.submit', async (_$, e) => ({ text: e.text }))
+      const world = await boot($, on, { surface })
+      await $.prompt.submit({ text: 'from the phone', origin: { kind: 'bridge' } } as never)
+      await $.prompt.submit({ text: 'Build my landing page', origin: { kind: 'composer' } } as never)
+      await startJob($)
+      await world.clock.advance(1)
+      expect(world.ran).toEqual(['stack'])
+    })
+
     test('stacked but /stack is refused: the own pane shows the full checklist', { plugins: [HOST] }, async ($, on) => {
       const world = await boot($, on, { surface, stackRunFails: true })
       await startJob($)
