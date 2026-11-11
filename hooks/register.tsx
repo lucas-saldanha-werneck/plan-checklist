@@ -252,6 +252,9 @@ function bringStackForward($: EngineInterface): void {
 /** Makes the checklist visible: the Stack pane when side-stack runs, else the own pane. */
 async function showChecklist($: EngineInterface, asked = false): Promise<'stack' | 'own'> {
   if (await checkHost($)) {
+    // A headless run (claude -p, robots) has no pane, and a /stack run there ends
+    // the run with a second, empty result that takes the place of the real answer.
+    if (!(await hasSurface($))) return 'stack'
     // From Remote Control the pane cannot show, so only an explicit /checklist runs /stack.
     if (asked || (stackShown !== true && !lastPromptFromRemote)) bringStackForward($)
     return 'stack'

@@ -444,6 +444,19 @@ for (const surface of SURFACES) {
       expect(world.ran).toEqual(['stack'])
     })
 
+    // In `claude -p` a /stack run becomes a second, empty result that replaces the real answer.
+    test('a headless run (no surface) never runs /stack, not even for /checklist', { plugins: [HOST, READER] }, async ($, on) => {
+      on('session.surfaces', async () => ({ value: [] }) as never)
+      const world = await boot($, on, { surface })
+      await startJob($)
+      await world.clock.advance(1)
+      expect(world.ran).toEqual([])
+      await $.command.run({ command: 'checklist', args: '' } as never)
+      await world.clock.advance(1)
+      expect(world.ran).toEqual([])
+      expect(world.opened).toEqual([])
+    })
+
     test('a prompt typed here after one from Remote Control runs /stack again', { plugins: [HOST, READER] }, async ($, on) => {
       on('prompt.submit', async (_$, e) => ({ text: e.text }))
       const world = await boot($, on, { surface })
