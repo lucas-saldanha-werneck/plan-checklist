@@ -49,7 +49,7 @@ At the prompt of a terminal Claude Code session:
 
 ```
 /plugin marketplace add lucas-saldanha-werneck/claude-plugins
-/plugin install plan-checklist@lucas-plugins
+/plugin install plan-checklist@lucas-tools
 ```
 
 From a shell, the same commands work with `claude plugin` in place of `/plugin`. `/plugin` does not
@@ -121,7 +121,7 @@ own pane handling:
 ## Uninstall
 
 ```
-/plugin uninstall plan-checklist@lucas-plugins
+/plugin uninstall plan-checklist@lucas-tools
 ```
 
 ## Limits

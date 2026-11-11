@@ -156,7 +156,7 @@ async function boot($: Engine, on: On, setup: Setup = {}): Promise<World> {
       description: '',
       source: 'plugin',
       isFullscreen: false,
-      plugin: `${name === 'stack' ? 'side-stack' : 'plan-checklist'}@lucas-plugins`,
+      plugin: `${name === 'stack' ? 'side-stack' : 'plan-checklist'}@lucas-tools`,
     })),
   }) as never)
   on('command.run', async (_$, e) => {
