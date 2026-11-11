@@ -48,7 +48,7 @@ If the session uses TodoWrite or the task tools, the to-do list is shown as the 
 At the prompt of a terminal Claude Code session:
 
 ```
-/plugin marketplace add lucas-saldanha-werneck/claude-plugins
+/plugin marketplace add lucas-saldanha-werneck/lucas-tools
 /plugin install plan-checklist@lucas-tools
 ```
 
