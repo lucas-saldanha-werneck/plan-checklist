@@ -103,6 +103,10 @@ new session start):
   not know it to be open. Claude Code runs a plugin's command once the session is idle, so during a
   turn the Stack pane may come up only when Claude finishes. If `/stack` is refused, the own pane
   opens with the full checklist.
+- A new plan does not run `/stack` when the person reads from Remote Control (phone or claude.ai),
+  where the run would only wait in the chat: the last prompt came from there, or no prompt came yet
+  (a resumed summary, a hook's feedback) and a Remote Control client is attached. `/checklist`
+  still runs it. Headless runs (`claude -p`) never run it.
 - plan-checklist publishes `stacked` (true while it draws in the Stack pane) for side-stack to read.
 - side-stack not running, or gone: its own pane again.
 
