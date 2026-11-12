@@ -40,6 +40,10 @@ export const STACK_PANE = 'side-stack'
 const checklistAtom = atom({ plugin: 'plan-checklist', key: 'checklist' } as const, null)
 // true while the checklist is drawn in the side-stack pane; side-stack reads it.
 const stackedAtom = atom({ plugin: 'plan-checklist', key: 'stacked' } as const, false)
+// Counted up to ask side-stack for its pane, silently; side-stack answers with the
+// same number in its `shownFor` (0.4.7 and later). An older side-stack answers nothing.
+const showStackAtom = atom({ plugin: 'plan-checklist', key: 'showStack' } as const, 0)
+const shownForAtom = atom({ plugin: 'side-stack', key: 'shownFor' } as const, 0)
 
 const METER = 10
 const LABEL_COLUMNS = 7
@@ -78,7 +82,7 @@ function guide(requirePlanFirst: boolean): string {
     '- Never put file paths, file names, commands, code or tool names in a step name.',
     "- Call `report_progress` as real progress happens, with the step's name and a percent. Call it with 100 the moment a step finishes.",
     '- If the plan changes, call `plan_steps` again with the new full list.',
-    "- A new prompt after a turn that ended with steps left (the checklist says paused) starts a new plan: call `plan_steps` again, with the remaining steps if you go on with the old job.",
+    "- A new prompt from the person after a turn that ended with steps left (the checklist says paused) starts a new plan: call `plan_steps` again, with the remaining steps if you go on with the old job. A background task's notification, a hook's feedback or a plugin's message goes on with the current plan.",
     '- If this session has TodoWrite or TaskCreate, you may use the to-do list as the plan instead of `plan_steps`.',
   ]
   if (requirePlanFirst) {
@@ -108,6 +112,14 @@ let stackUnreachable = false
 // null until the person sends one: then a plan made from a resumed summary or a hook's feedback
 // runs /stack only when no Remote Control client is attached.
 let lastPromptFromRemote: boolean | null = null
+// Where the next main-loop turn's prompt came from, set by prompt.submit for a prompt that starts a
+// turn of its own (no turnId) and used up by that turn's turn.start. null: no prompt.submit came
+// before the turn (a Stop hook's feedback, a continuation, a message typed during an earlier turn).
+let nextTurnOrigin: string | null = null
+// A person's own request: typed here, sent from Remote Control, or the SDK host's prompt (claude -p).
+// Every other origin (a background task's notification, a plugin's prompt, a schedule, a peer
+// session, an unclassified turn) is automated: it goes on with the job, never starts one.
+const PERSON_ORIGINS: readonly string[] = ['composer', 'bridge', 'sdk']
 // Surfaces that show a side pane; any other attached surface is a Remote Control client.
 const PANE_SURFACES: readonly string[] = ['terminal', 'desktop', 'vscode']
 // The session id this module last set up under. A /clear goes on under a new
@@ -248,21 +260,52 @@ async function checkHost($: EngineInterface): Promise<boolean> {
 }
 
 /**
- * Asks side-stack to show its pane by running its /stack command. The run waits
- * until the session is idle and is refused inside a hook the turn waits on, so it
- * runs from a timer. If it fails, the own pane shows the full checklist instead.
+ * The old way, for a side-stack older than 0.4.7: run its /stack command. It shows
+ * in the chat as a prompt from this plugin, waits until the session is idle and is
+ * refused inside a hook the turn waits on. If it fails, the own pane shows the full
+ * checklist instead.
+ */
+async function runStack($: EngineInterface): Promise<void> {
+  try {
+    await $.command.run({ command: 'stack' })
+    stackUnreachable = false
+    stackShown = true
+  } catch {
+    stackUnreachable = true
+    await openOwn($)
+  }
+}
+
+/**
+ * Asks side-stack to show its pane with nothing in the chat: counts `showStack`
+ * up; side-stack opens its pane and writes the same number to `shownFor`. The
+ * answer is read on a later tick; with none (an older side-stack), /stack runs.
  */
 function bringStackForward($: EngineInterface): void {
   $.clock.after(0, () => {
     void (async () => {
+      let ask = 0
       try {
-        await $.command.run({ command: 'stack' })
-        stackUnreachable = false
-        stackShown = true
+        await update($, showStackAtom, n => (ask = (n ?? 0) + 1))
       } catch {
-        stackUnreachable = true
-        await openOwn($)
+        ask = 0
       }
+      $.clock.after(0, () => {
+        void (async () => {
+          let answered = false
+          try {
+            answered = ask > 0 && (await read($, shownForAtom)) === ask
+          } catch {
+            answered = false
+          }
+          if (answered) {
+            stackUnreachable = false
+            stackShown = true
+            return
+          }
+          await runStack($)
+        })()
+      })
     })()
   })
 }
@@ -598,20 +641,31 @@ export const register: Register = (on, options) => {
     const kind = (e as { origin?: { kind?: string } }).origin?.kind
     if (kind === 'bridge') lastPromptFromRemote = true
     else if (kind === 'composer') lastPromptFromRemote = false
+    // Delivered into a running turn (turnId set): no turn of its own follows from it now.
+    if ((e as { turnId?: string }).turnId === undefined) nextTurnOrigin = kind ?? 'unclassified'
     return next(e)
   }).catch(($, e, next) => next(e))
 
-  // A real prompt while nothing runs starts a job. A reply to a question, a permission prompt or
+  // A person's prompt while nothing runs starts a job. A reply to a question, a permission prompt or
   // "stuck" goes on with the plan; a prompt after a turn that ended with steps left (paused) may be
   // other work, so it starts a new job and Claude plans again.
+  // An automated turn (a task notification, a Stop hook's feedback, a plugin's prompt, a message
+  // typed during an earlier turn) never starts a job: it goes on with an open one, or runs ungated.
   on('turn.start', async ($, e, next) => {
     if (e.agentId !== undefined) return next(e)
     await followSession($)
+    const origin = nextTurnOrigin
+    nextTurnOrigin = null
     const wasCommand = lastSubmitWasCommand
     lastSubmitWasCommand = false
     const text = e.text.trim()
     if (text === '' || wasCommand || text.startsWith('/')) return next(e)
     const list = await read($, checklistAtom)
+    if (origin === null || !PERSON_ORIGINS.includes(origin)) {
+      const saidNo = list !== null && list.phase === 'stuck' && list.stuckReason === SAID_NO
+      if (list !== null && !saidNo && (list.phase === 'needsYou' || list.phase === 'stuck')) await setPhase($, 'working')
+      return next(e)
+    }
     const paused = list !== null && list.phase === 'needsYou' && (list.needsYouReason ?? ENDED_EARLY) === ENDED_EARLY
     if (list !== null && !paused && (list.phase === 'working' || list.phase === 'needsYou' || list.phase === 'stuck')) {
       if (list.phase !== 'working') await setPhase($, 'working')

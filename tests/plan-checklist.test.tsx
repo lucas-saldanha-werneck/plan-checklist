@@ -69,6 +69,24 @@ const HOST: Plugin = {
   },
 }
 
+/** side-stack 0.4.7 and later: answers a showStack ask by opening its pane, silently, and writing shownFor. */
+const SILENT_HOST: Plugin = {
+  name: 'side-stack',
+  register: on => {
+    on('session.start', async ($, e, next) => {
+      await $.state.set({ plugin: 'side-stack', key: 'present' }, true)
+      await $.command.register({ name: 'stack', description: 'Open the Stack side pane' })
+      return next(e)
+    })
+    on('state.set', { plugin: 'plan-checklist', key: 'showStack' }, async ($, e, next) => {
+      const result = await next(e)
+      await $.ui.open({ id: 'side-stack', title: 'Stack' })
+      await $.state.set({ plugin: 'side-stack', key: 'shownFor' }, (e as { value: number }).value)
+      return result
+    })
+  },
+}
+
 /** The host, turning up half a second late (enabled after the own pane opened). */
 const LATE_HOST: Plugin = {
   name: 'side-stack',
@@ -166,6 +184,7 @@ async function boot($: Engine, on: On, setup: Setup = {}): Promise<World> {
     if (setup.stackRunFails === true) throw new Error('refused')
     return { text: '' } as never
   })
+  on('prompt.submit', async (_$, e) => ({ text: e.text }))
   on('turn.start', (_$, e) => ({ turnId: e.turnId }))
   on('turn.complete', (_$, e) => ({ text: e.answer }))
   on('classic.Notification', () => ({}))
@@ -210,8 +229,10 @@ async function call($: Engine, input: object): Promise<Called> {
   return ($.tool.call as unknown as (input: object) => Promise<Called>)(input)
 }
 
-async function startJob($: Engine, text = 'Build my landing page'): Promise<void> {
-  await $.turn.start({ text, turnId: 't1' })
+/** A prompt that starts a turn: from the person (typed here) unless `kind` says who sent it. */
+async function startJob($: Engine, text = 'Build my landing page', kind = 'composer', turnId = 't1'): Promise<void> {
+  await $.prompt.submit({ text, origin: { kind } } as never)
+  await $.turn.start({ text, turnId })
 }
 
 async function paneTexts($: Engine, pane: typeof OWN_PANE | typeof STACK_PANE, surface: Surface): Promise<string[]> {
@@ -435,10 +456,8 @@ for (const surface of SURFACES) {
     })
 
     test('from Remote Control a new plan does not run /stack; /checklist still does', { plugins: [HOST, READER] }, async ($, on) => {
-      on('prompt.submit', async (_$, e) => ({ text: e.text }))
       const world = await boot($, on, { surface })
-      await $.prompt.submit({ text: 'Build my landing page', origin: { kind: 'bridge' } } as never)
-      await startJob($)
+      await startJob($, 'Build my landing page', 'bridge')
       await world.clock.advance(1)
       expect(world.ran).toEqual([])
       await $.command.run({ command: 'checklist', args: '' } as never)
@@ -462,29 +481,49 @@ for (const surface of SURFACES) {
     test('before any prompt, a phone attached to the session keeps a new plan from running /stack', { plugins: [HOST, READER] }, async ($, on) => {
       on('session.surfaces', async () => ({ value: ['terminal', 'mobile'] }) as never)
       const world = await boot($, on, { surface })
-      await startJob($)
+      // No prompt yet (a resumed summary): the plan itself starts the job.
+      await call($, { tool: PLAN, steps: ['Read your notes', 'Build the page'] })
       await world.clock.advance(1)
       expect(world.ran).toEqual([])
     })
 
     test('a prompt typed here wins over an attached phone', { plugins: [HOST, READER] }, async ($, on) => {
       on('session.surfaces', async () => ({ value: ['terminal', 'mobile'] }) as never)
-      on('prompt.submit', async (_$, e) => ({ text: e.text }))
       const world = await boot($, on, { surface })
-      await $.prompt.submit({ text: 'Build my landing page', origin: { kind: 'composer' } } as never)
       await startJob($)
       await world.clock.advance(1)
       expect(world.ran).toEqual(['stack'])
     })
 
     test('a prompt typed here after one from Remote Control runs /stack again', { plugins: [HOST, READER] }, async ($, on) => {
-      on('prompt.submit', async (_$, e) => ({ text: e.text }))
       const world = await boot($, on, { surface })
       await $.prompt.submit({ text: 'from the phone', origin: { kind: 'bridge' } } as never)
-      await $.prompt.submit({ text: 'Build my landing page', origin: { kind: 'composer' } } as never)
       await startJob($)
       await world.clock.advance(1)
       expect(world.ran).toEqual(['stack'])
+    })
+
+    test('side-stack 0.4.7+: a new plan and /checklist bring the Stack pane forward with no /stack prompt', { plugins: [SILENT_HOST, READER] }, async ($, on) => {
+      const world = await boot($, on, { surface })
+      await startJob($)
+      await world.clock.advance(1)
+      expect(world.ran).toEqual([])
+      expect(world.opened).toEqual(['side-stack:Stack'])
+      await $.command.run({ command: 'checklist', args: '' } as never)
+      await world.clock.advance(1)
+      expect(world.ran).toEqual([])
+      expect(world.opened).toEqual(['side-stack:Stack', 'side-stack:Stack'])
+      expect(world.opened.filter(one => one.startsWith('plan-checklist:'))).toEqual([])
+    })
+
+    test('side-stack 0.4.7+ in a headless run: nothing opens and nothing runs', { plugins: [SILENT_HOST, READER] }, async ($, on) => {
+      on('session.surfaces', async () => ({ value: [] }) as never)
+      const world = await boot($, on, { surface })
+      await startJob($)
+      await $.command.run({ command: 'checklist', args: '' } as never)
+      await world.clock.advance(1)
+      expect(world.ran).toEqual([])
+      expect(world.opened).toEqual([])
     })
 
     test('stacked but /stack is refused: the own pane shows the full checklist', { plugins: [HOST] }, async ($, on) => {
@@ -596,7 +635,7 @@ for (const surface of SURFACES) {
     test('PC-01: a new prompt after a paused plan starts a new plan', async ($, on) => {
       const world = await boot($, on, { surface })
       await paused($)
-      await $.turn.start({ text: 'Translate my resume', turnId: 't2' })
+      await startJob($, 'Translate my resume', 'composer', 't2')
       expect(world.opened.at(-1)).toBe('plan-checklist:Plan')
       const all = (await paneTexts($, OWN_PANE, surface)).join('\n')
       expect(all).toContain('Translate my resume')
@@ -608,7 +647,7 @@ for (const surface of SURFACES) {
     test('PC-01: with require_plan_first on, the new request needs its own plan', { options: { require_plan_first: true } }, async ($, on) => {
       await boot($, on, { surface })
       await paused($)
-      await $.turn.start({ text: 'Translate my resume', turnId: 't2' })
+      await startJob($, 'Translate my resume', 'composer', 't2')
       expect((await call($, { tool: 'Bash', command: 'ls' })).deny).toContain('plan_steps')
     })
 
@@ -644,7 +683,7 @@ for (const surface of SURFACES) {
       await call($, { tool: PLAN, steps: ['Read your notes', 'Build the page'] })
       await call($, { tool: REPORT, task: 'Build the page', percent: 100 })
       await $.turn.complete({ answer: 'Done.', durationMs: 10, isAborted: false, turnId: 't1', reason: 'answer' })
-      await $.turn.start({ text: '/some-skill', turnId: 't2' })
+      await startJob($, '/some-skill', 'composer', 't2')
       await call($, { tool: PLAN, steps: ['Write the summary', 'Send it'] })
       expect(world.opened.at(-1)).toBe('plan-checklist:Plan 0/2')
       await world.clock.advance(6000)
@@ -669,7 +708,7 @@ for (const surface of SURFACES) {
       await call($, { tool: PLAN, steps: ['Read your notes', 'Build the page'] })
       await $.turn.complete({ answer: '', durationMs: 10, isAborted: false, turnId: 't1', reason: 'error' })
       expect(world.opened.at(-1)).toBe('plan-checklist:Plan · stuck')
-      await $.turn.start({ text: 'continue', turnId: 't2' })
+      await startJob($, 'continue', 'composer', 't2')
       expect(world.opened.at(-1)).toBe('plan-checklist:Plan 0/2')
       expect((await call($, { tool: REPORT, task: 'Read your notes', percent: 100 })).deny).toBeUndefined()
     })
@@ -696,6 +735,68 @@ for (const surface of SURFACES) {
     })
   })
 
+  describe('automated turns', () => {
+    const GATE = { options: { require_plan_first: true } }
+    const done = async ($: Engine) => {
+      await startJob($)
+      await call($, { tool: PLAN, steps: ['Read your notes', 'Build the page'] })
+      await call($, { tool: REPORT, task: 'Build the page', percent: 100 })
+      await $.turn.complete({ answer: 'Done.', durationMs: 10, isAborted: false, turnId: 't1', reason: 'answer' })
+    }
+    const paused = async ($: Engine) => {
+      await startJob($)
+      await call($, { tool: PLAN, steps: ['Read your notes', 'Build the page'] })
+      await $.turn.complete({ answer: 'Waiting.', durationMs: 10, isAborted: false, turnId: 't1', reason: 'answer' })
+    }
+
+    for (const kind of ['task-notification', 'plugin', 'scheduled-trigger', 'peer', 'unclassified']) {
+      test(`a ${kind} turn after All done runs ungated and starts no job`, GATE, async ($, on) => {
+        const world = await boot($, on, { surface })
+        await done($)
+        await startJob($, '<task-notification>Background command finished</task-notification>', kind, 't2')
+        expect((await call($, { tool: 'Bash', command: 'ls' })).deny).toBeUndefined()
+        expect(world.opened.at(-1)).toBe('plan-checklist:Plan · done')
+      })
+    }
+
+    test("a Stop hook's feedback (a turn with no prompt) after All done runs ungated", GATE, async ($, on) => {
+      await boot($, on, { surface })
+      await done($)
+      await $.turn.start({ text: 'Stop hook feedback: run the tests first', turnId: 't2' })
+      expect((await call($, { tool: 'Bash', command: 'ls' })).deny).toBeUndefined()
+    })
+
+    test('a message typed during the turn, which runs after it finished, is ungated', GATE, async ($, on) => {
+      await boot($, on, { surface })
+      await startJob($)
+      await call($, { tool: PLAN, steps: ['Read your notes', 'Build the page'] })
+      await $.prompt.submit({ text: 'also check the footer', origin: { kind: 'composer' }, turnId: 't1' } as never)
+      await call($, { tool: REPORT, task: 'Build the page', percent: 100 })
+      await $.turn.complete({ answer: 'Done.', durationMs: 10, isAborted: false, turnId: 't1', reason: 'answer' })
+      await $.turn.start({ text: 'also check the footer', turnId: 't2' })
+      expect((await call($, { tool: 'Bash', command: 'ls' })).deny).toBeUndefined()
+    })
+
+    test('a task notification after a paused plan goes on with that plan', GATE, async ($, on) => {
+      const world = await boot($, on, { surface })
+      await paused($)
+      expect(world.opened.at(-1)).toBe('plan-checklist:Plan · paused')
+      await startJob($, 'Background command finished', 'task-notification', 't2')
+      expect(world.opened.at(-1)).toBe('plan-checklist:Plan 0/2')
+      expect((await call($, { tool: 'Bash', command: 'ls' })).deny).toBeUndefined()
+      expect((await call($, { tool: REPORT, task: 'Read your notes', percent: 100 })).deny).toBeUndefined()
+    })
+
+    for (const kind of ['composer', 'bridge', 'sdk']) {
+      test(`a person's new request (${kind}) after All done still needs a plan`, GATE, async ($, on) => {
+        await boot($, on, { surface })
+        await done($)
+        await startJob($, 'Translate my resume', kind, 't2')
+        expect((await call($, { tool: 'Bash', command: 'ls' })).deny).toContain('plan_steps')
+      })
+    }
+  })
+
     describe('after /clear (protocol v3)', () => {
       test('the /stack command alone means side-stack is there', { plugins: [COMMAND_ONLY_HOST, READER] }, async ($, on) => {
         const world = await boot($, on, { surface })
@@ -718,7 +819,7 @@ for (const surface of SURFACES) {
         const runsBefore = world.ran.filter(c => c === 'stack').length
         await $.session.end({ reason: 'clear', sessionId: 's1', resume: {} } as never)
         sid = 's2'
-        await $.turn.start({ text: 'Now add a footer', turnId: 't2' })
+        await startJob($, 'Now add a footer', 'composer', 't2')
         await call($, { tool: PLAN, steps: ['Write the footer', 'Check it'] })
         await world.clock.advance(1)
         expect(world.ran.filter(c => c === 'stack').length > runsBefore).toBe(true)
