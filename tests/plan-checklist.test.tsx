@@ -457,6 +457,24 @@ for (const surface of SURFACES) {
       expect(world.opened).toEqual([])
     })
 
+    test('before any prompt, a phone attached to the session keeps a new plan from running /stack', { plugins: [HOST, READER] }, async ($, on) => {
+      on('session.surfaces', async () => ({ value: ['terminal', 'mobile'] }) as never)
+      const world = await boot($, on, { surface })
+      await startJob($)
+      await world.clock.advance(1)
+      expect(world.ran).toEqual([])
+    })
+
+    test('a prompt typed here wins over an attached phone', { plugins: [HOST, READER] }, async ($, on) => {
+      on('session.surfaces', async () => ({ value: ['terminal', 'mobile'] }) as never)
+      on('prompt.submit', async (_$, e) => ({ text: e.text }))
+      const world = await boot($, on, { surface })
+      await $.prompt.submit({ text: 'Build my landing page', origin: { kind: 'composer' } } as never)
+      await startJob($)
+      await world.clock.advance(1)
+      expect(world.ran).toEqual(['stack'])
+    })
+
     test('a prompt typed here after one from Remote Control runs /stack again', { plugins: [HOST, READER] }, async ($, on) => {
       on('prompt.submit', async (_$, e) => ({ text: e.text }))
       const world = await boot($, on, { surface })
