@@ -116,10 +116,10 @@ let lastPromptFromRemote: boolean | null = null
 // turn of its own (no turnId) and used up by that turn's turn.start. null: no prompt.submit came
 // before the turn (a Stop hook's feedback, a continuation, a message typed during an earlier turn).
 let nextTurnOrigin: string | null = null
-// A person's own request: typed here, sent from Remote Control, or the SDK host's prompt (claude -p).
-// Every other origin (a background task's notification, a plugin's prompt, a schedule, a peer
-// session, an unclassified turn) is automated: it goes on with the job, never starts one.
-const PERSON_ORIGINS: readonly string[] = ['composer', 'bridge', 'sdk']
+// A person's own request: typed here or sent from Remote Control. Every other origin (the SDK
+// host's prompt in claude -p, a background task's notification, a plugin's prompt, a schedule, a
+// peer session, an unclassified turn) goes on with the job or runs ungated, never starts one.
+const PERSON_ORIGINS: readonly string[] = ['composer', 'bridge']
 // Surfaces that show a side pane; any other attached surface is a Remote Control client.
 const PANE_SURFACES: readonly string[] = ['terminal', 'desktop', 'vscode']
 // The session id this module last set up under. A /clear goes on under a new

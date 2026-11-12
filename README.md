@@ -82,7 +82,7 @@ and the rule that is enforced always match.
 
 | Key | Default | What it does |
 | --- | --- | --- |
-| `require_plan_first` | off | `true`: every other tool call is refused until Claude has called `plan_steps` (or written a to-do list) for the person's request. Only a prompt the person sends (typed here, from Remote Control, or the `claude -p` prompt) starts a request; a turn that starts by itself (a background task's notification, a Stop hook's feedback, a plugin's prompt, a schedule, another session's message, a message typed during an earlier turn) goes on with the current plan, or runs unchecked when there is none. ToolSearch, starting a subagent (the Agent tool, or its older name Task), the to-do tools, AskUserQuestion and the assumptions-pane mod's `log_assumption` are never refused, and neither are a subagent's own tool calls. `false`: never refused. `null`: use the option in `/config`. |
+| `require_plan_first` | off | `true`: every other tool call is refused until Claude has called `plan_steps` (or written a to-do list) for the person's request. Only a prompt the person sends (typed here or from Remote Control) starts a request; a headless `claude -p` prompt and a turn that starts by itself (a background task's notification, a Stop hook's feedback, a plugin's prompt, a schedule, another session's message, a message typed during an earlier turn) goes on with the current plan, or runs unchecked when there is none. ToolSearch, starting a subagent (the Agent tool, or its older name Task), the to-do tools, AskUserQuestion and the assumptions-pane mod's `log_assumption` are never refused, and neither are a subagent's own tool calls. `false`: never refused. `null`: use the option in `/config`. |
 
 The same switch is in `/config` as "Require a plan first" (off by default). A `true` or `false` in
 the file wins over it.
@@ -142,7 +142,7 @@ own pane handling:
   side-stack. Nobody has tried it by hand in the desktop app or on mobile yet.
 - Whether Claude Code tells plan-checklist when the side-stack pane is closed is not proven; if it
   does not, a closed Stack pane comes back with `/checklist` or `/stack`.
-- Headless runs (`claude -p`) open no pane. `require_plan_first` applies there too when it is on.
+- Headless runs (`claude -p`) open no pane, never run `/stack`, and are never refused by `require_plan_first`.
 - The pane shows at most 10 steps; more are counted on one line.
 - Tests: `claude plugin validate .` and `claude plugin test .` (CI runs both on Linux, macOS and
   Windows).
