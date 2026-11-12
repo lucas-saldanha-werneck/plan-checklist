@@ -41,7 +41,8 @@ first and report progress:
 - A subagent's calls to either tool are answered and change nothing: only the main conversation's
   plan is shown.
 
-If the session uses TodoWrite or the task tools, the to-do list is shown as the plan too.
+If the session uses TodoWrite or the task tools, the to-do list is shown as the plan too. A
+TodoWrite call counts only after the tool accepted it and only with at least one item.
 
 ## Install
 
@@ -64,6 +65,10 @@ desktop app's local Code sessions.
   pane instead.
 - When every step is done and the turn ends, the list shows "All done" and shrinks to one line after
   5 seconds. The next prompt starts a new plan.
+- When the turn ends with steps left (`Plan · paused`), the next prompt also starts a new plan, since
+  it may be about something else: Claude calls `plan_steps` again (with the remaining steps if it goes
+  on with the old job). A reply while the plan is `stuck` (after an error, a refusal or a "no" to a
+  permission prompt) goes on with the same plan.
 - `/clear` empties the checklist; the next prompt starts a new one, in the same place (the Stack
   pane when side-stack runs). Nothing is saved between sessions.
 
@@ -77,7 +82,7 @@ and the rule that is enforced always match.
 
 | Key | Default | What it does |
 | --- | --- | --- |
-| `require_plan_first` | off | `true`: every other tool call is refused until Claude has called `plan_steps` (or written a to-do list) for the request. ToolSearch, the to-do tools, AskUserQuestion, the assumptions-pane mod's `log_assumption` and subagents are never refused. `false`: never refused. `null`: use the option in `/config`. |
+| `require_plan_first` | off | `true`: every other tool call is refused until Claude has called `plan_steps` (or written a to-do list) for the request. ToolSearch, the to-do tools, AskUserQuestion and the assumptions-pane mod's `log_assumption` are never refused. Starting a subagent (the Agent tool) is refused like any other tool; a subagent's own tool calls are never refused. `false`: never refused. `null`: use the option in `/config`. |
 
 The same switch is in `/config` as "Require a plan first" (off by default). A `true` or `false` in
 the file wins over it.

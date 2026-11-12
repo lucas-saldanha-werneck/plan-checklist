@@ -46,6 +46,8 @@ type Setup = {
   surface?: Surface
   /** side-stack beneath orders the sections and leaves an empty slot for plan-checklist between two others. */
   slot?: boolean
+  /** What the tool beneath answers; by default every tool works and says "ok". */
+  tool?: (e: Record<string, unknown>) => object
 }
 
 type Surface = 'terminal' | 'desktop'
@@ -167,7 +169,7 @@ async function boot($: Engine, on: On, setup: Setup = {}): Promise<World> {
   on('turn.start', (_$, e) => ({ turnId: e.turnId }))
   on('turn.complete', (_$, e) => ({ text: e.answer }))
   on('classic.Notification', () => ({}))
-  on('tool.call', () => ({ result: 'ok', text: 'ok' }))
+  on('tool.call', (_$, e) => (setup.tool ? setup.tool(e as never) : { result: 'ok', text: 'ok' }) as never)
   const panes = new Map<string, string>()
   on('ui.open', async (_$, e) => {
     world.opened.push(`${e.id}:${e.title ?? ''}`)
@@ -581,6 +583,114 @@ for (const surface of SURFACES) {
       const all = (await paneTexts($, OWN_PANE, surface)).join('\n')
       expect(all).toContain('No plan yet.')
       expect(all).not.toContain('Read your notes')
+    })
+  })
+
+  describe('second audit', () => {
+    const paused = async ($: Engine) => {
+      await startJob($)
+      await call($, { tool: PLAN, steps: ['Read your notes', 'Build the page'] })
+      await $.turn.complete({ answer: 'Waiting.', durationMs: 10, isAborted: false, turnId: 't1', reason: 'answer' })
+    }
+
+    test('PC-01: a new prompt after a paused plan starts a new plan', async ($, on) => {
+      const world = await boot($, on, { surface })
+      await paused($)
+      await $.turn.start({ text: 'Translate my resume', turnId: 't2' })
+      expect(world.opened.at(-1)).toBe('plan-checklist:Plan')
+      const all = (await paneTexts($, OWN_PANE, surface)).join('\n')
+      expect(all).toContain('Translate my resume')
+      expect(all).not.toContain('Read your notes')
+      const report = await call($, { tool: REPORT, task: 'Read your notes', percent: 100 })
+      expect(report.deny).toContain('plan_steps')
+    })
+
+    test('PC-01: with require_plan_first on, the new request needs its own plan', { options: { require_plan_first: true } }, async ($, on) => {
+      await boot($, on, { surface })
+      await paused($)
+      await $.turn.start({ text: 'Translate my resume', turnId: 't2' })
+      expect((await call($, { tool: 'Bash', command: 'ls' })).deny).toContain('plan_steps')
+    })
+
+    test('PC-01: the system prompt asks for plan_steps again after a pause', async ($, on) => {
+      on('prompt.compose', async () => ({ sections: [] }))
+      await boot($, on, { surface })
+      const req = { model: 'claude-test', promptModel: 'claude-test', surfaces: [surface], tools: [], outputStyle: null, traits: [] } as never
+      const text = (await $.prompt.compose(req)).sections.find(s => s.id === 'plan-checklist:guide')?.text ?? ''
+      expect(text).toContain('paused')
+    })
+
+    test('PC-02: a refused TodoWrite changes nothing and does not open the gate', { options: { require_plan_first: true } }, async ($, on) => {
+      await boot($, on, { surface, tool: e => (e.tool === 'TodoWrite' ? { deny: 'no' } : { result: 'ok', text: 'ok' }) })
+      await startJob($)
+      await call($, { tool: 'TodoWrite', todos: [{ content: 'Sneaky step', status: 'pending' }] })
+      expect((await paneTexts($, OWN_PANE, surface)).join('\n')).not.toContain('Sneaky step')
+      expect((await call($, { tool: 'Bash', command: 'ls' })).deny).toContain('plan_steps')
+    })
+
+    test('PC-02: an empty TodoWrite does not open the gate', { options: { require_plan_first: true } }, async ($, on) => {
+      await boot($, on, { surface })
+      await startJob($)
+      await call($, { tool: 'TodoWrite', todos: [] })
+      expect((await call($, { tool: 'Bash', command: 'ls' })).deny).toContain('plan_steps')
+      await call($, { tool: 'TodoWrite', todos: [{ content: 'Real step', status: 'in_progress' }] })
+      expect((await call($, { tool: 'Bash', command: 'ls' })).deny).toBeUndefined()
+      expect((await paneTexts($, OWN_PANE, surface)).join('\n')).toContain('Real step')
+    })
+
+    test('PC-03: a new plan after All done is shown, not hidden under All done', async ($, on) => {
+      const world = await boot($, on, { surface })
+      await startJob($)
+      await call($, { tool: PLAN, steps: ['Read your notes', 'Build the page'] })
+      await call($, { tool: REPORT, task: 'Build the page', percent: 100 })
+      await $.turn.complete({ answer: 'Done.', durationMs: 10, isAborted: false, turnId: 't1', reason: 'answer' })
+      await $.turn.start({ text: '/some-skill', turnId: 't2' })
+      await call($, { tool: PLAN, steps: ['Write the summary', 'Send it'] })
+      expect(world.opened.at(-1)).toBe('plan-checklist:Plan 0/2')
+      await world.clock.advance(6000)
+      const all = (await paneTexts($, OWN_PANE, surface)).join('\n')
+      expect(all).not.toContain('All done')
+      expect(all).toContain('Write the summary')
+    })
+
+    // As the README now says: starting a subagent is refused before a plan; a subagent's own calls are not.
+    test('PC-05: starting a subagent waits for the plan; its own tool calls are never refused', { options: { require_plan_first: true } }, async ($, on) => {
+      await boot($, on, { surface })
+      await startJob($)
+      expect((await call($, { tool: 'Agent', prompt: 'x' })).deny).toContain('plan_steps')
+      expect((await call($, { tool: 'Bash', command: 'ls', agentId: 'a1' })).deny).toBeUndefined()
+    })
+
+    test('PC-08: a reply after "stuck" keeps the plan', async ($, on) => {
+      const world = await boot($, on, { surface })
+      await startJob($)
+      await call($, { tool: PLAN, steps: ['Read your notes', 'Build the page'] })
+      await $.turn.complete({ answer: '', durationMs: 10, isAborted: false, turnId: 't1', reason: 'error' })
+      expect(world.opened.at(-1)).toBe('plan-checklist:Plan · stuck')
+      await $.turn.start({ text: 'continue', turnId: 't2' })
+      expect(world.opened.at(-1)).toBe('plan-checklist:Plan 0/2')
+      expect((await call($, { tool: REPORT, task: 'Read your notes', percent: 100 })).deny).toBeUndefined()
+    })
+
+    test('PC-04: reopening a finished step clears its 100%', async ($, on) => {
+      await boot($, on, { surface, tool: e => (e.tool === 'TaskCreate' ? { result: 'ok', text: `Task #${String(e.subject).length} created successfully: ${String(e.subject)}` } : { result: 'ok', text: 'ok' }) })
+      await startJob($)
+      await call($, { tool: 'TaskCreate', subject: 'Read notes' })
+      await call($, { tool: 'TaskCreate', subject: 'Build page' })
+      await call($, { tool: REPORT, task: 'Read notes', percent: 100 })
+      await call($, { tool: 'TaskUpdate', taskId: '10', status: 'in_progress' })
+      const all = (await paneTexts($, OWN_PANE, surface)).join('\n')
+      expect(all).not.toContain('100%')
+    })
+
+    test('PC-06: the TaskCreate id comes from "Task #N", not the first number', async ($, on) => {
+      let n = 6
+      const world = await boot($, on, { surface, tool: e => (e.tool === 'TaskCreate' ? { result: 'ok', text: `2 tasks open. Task #${++n} created successfully: ${String(e.subject)}` } : { result: 'ok', text: 'ok' }) })
+      await startJob($)
+      await call($, { tool: 'TaskCreate', subject: 'Ship it' })
+      await call($, { tool: 'TaskCreate', subject: 'Tell the team' })
+      await call($, { tool: 'TaskUpdate', taskId: '7', status: 'completed' })
+      expect(world.opened.at(-1)).toBe('plan-checklist:Plan 1/2')
     })
   })
 

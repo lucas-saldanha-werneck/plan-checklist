@@ -75,6 +75,7 @@ function guide(requirePlanFirst: boolean): string {
     '- Never put file paths, file names, commands, code or tool names in a step name.',
     "- Call `report_progress` as real progress happens, with the step's name and a percent. Call it with 100 the moment a step finishes.",
     '- If the plan changes, call `plan_steps` again with the new full list.',
+    "- A new prompt after a turn that ended with steps left (the checklist says paused) starts a new plan: call `plan_steps` again, with the remaining steps if you go on with the old job.",
     '- If this session has TodoWrite or TaskCreate, you may use the to-do list as the plan instead of `plan_steps`.',
   ]
   if (requirePlanFirst) {
@@ -377,13 +378,18 @@ async function ensureJob($: EngineInterface): Promise<void> {
 }
 
 async function replaceTasks($: EngineInterface, tasks: Task[]): Promise<void> {
+  // A new plan is work in progress, even right after "All done" (a slash command keeps the job).
+  collapseTimer?.cancel()
+  collapseTimer = null
   await change($, list => ({
     ...list,
     tasks: settle(tasks),
     isPlanned: true,
-    phase: list.phase === 'needsYou' || list.phase === 'stuck' ? 'working' : list.phase,
+    phase: 'working',
     needsYouReason: null,
     stuckReason: null,
+    finishedAt: null,
+    isCollapsed: false,
   }))
 }
 
@@ -592,7 +598,9 @@ export const register: Register = (on, options) => {
     return next(e)
   }).catch(($, e, next) => next(e))
 
-  // A real prompt while nothing runs starts a job; a reply clears "Needs you".
+  // A real prompt while nothing runs starts a job. A reply to a question, a permission prompt or
+  // "stuck" goes on with the plan; a prompt after a turn that ended with steps left (paused) may be
+  // other work, so it starts a new job and Claude plans again.
   on('turn.start', async ($, e, next) => {
     if (e.agentId !== undefined) return next(e)
     await followSession($)
@@ -601,8 +609,9 @@ export const register: Register = (on, options) => {
     const text = e.text.trim()
     if (text === '' || wasCommand || text.startsWith('/')) return next(e)
     const list = await read($, checklistAtom)
-    if (list !== null && (list.phase === 'working' || list.phase === 'needsYou')) {
-      if (list.phase === 'needsYou') await setPhase($, 'working')
+    const paused = list !== null && list.phase === 'needsYou' && (list.needsYouReason ?? ENDED_EARLY) === ENDED_EARLY
+    if (list !== null && !paused && (list.phase === 'working' || list.phase === 'needsYou' || list.phase === 'stuck')) {
+      if (list.phase !== 'working') await setPhase($, 'working')
       return next(e)
     }
     await startJob($, text)
@@ -661,7 +670,13 @@ export const register: Register = (on, options) => {
 
     if (isActive && list.phase === 'needsYou') await setPhase($, 'working')
 
-    if (tool === 'TodoWrite' && Array.isArray(input.todos)) {
+    if (tool === 'AskUserQuestion' && isActive) await setPhase($, 'needsYou', { needsYouReason: HAS_QUESTION })
+
+    const ran = await next(e)
+    if (ran.deny !== undefined) return ran
+
+    // Only a to-do list the tool accepted, with at least one item, becomes the plan.
+    if (tool === 'TodoWrite' && ran.isError !== true && Array.isArray(input.todos) && input.todos.length > 0) {
       const todos = input.todos as Array<{ content?: string; status?: string }>
       await ensureJob($)
       await replaceTasks(
@@ -676,13 +691,8 @@ export const register: Register = (on, options) => {
       )
     }
 
-    if (tool === 'AskUserQuestion' && isActive) await setPhase($, 'needsYou', { needsYouReason: HAS_QUESTION })
-
-    const ran = await next(e)
-    if (ran.deny !== undefined) return ran
-
     if (tool === 'TaskCreate' && ran.isError !== true) {
-      const match = /#?(\d+)/.exec(ran.text ?? '')
+      const match = /\bTask #(\d+)\b/.exec(ran.text ?? '')
       const id = match ? `task${match[1]}` : makeId()
       const name = cleanName(String(input.subject ?? ''))
       await ensureJob($)
@@ -706,8 +716,10 @@ export const register: Register = (on, options) => {
                 }
                 const name = typeof input.subject === 'string' ? cleanName(input.subject) : task.name
                 if (status === 'completed') return { ...task, name, status: 'done', percent: 100 }
-                if (status === 'in_progress') return { ...task, name, status: 'active' }
-                if (status === 'pending') return { ...task, name, status: 'upcoming' }
+                // A step reopened after it was done starts again from 0%.
+                const reopened = task.status === 'done' ? { percent: 0, hasReported: false } : {}
+                if (status === 'in_progress') return { ...task, name, status: 'active', ...reopened }
+                if (status === 'pending') return { ...task, name, status: 'upcoming', ...reopened }
                 return { ...task, name }
               })
         return { ...one, tasks: settle(tasks) }
