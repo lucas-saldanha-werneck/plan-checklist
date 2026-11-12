@@ -52,9 +52,12 @@ const PANE_COLUMNS = 46
 const STACKED_LINE = 'Shown in the Stack pane (/stack)'
 
 // Tools that run before a plan exists, even with require_plan_first on: tool
-// loading, to-do lists, questions, and the assumptions-pane mod's note tool.
+// loading, starting a subagent (Agent, or its older name Task), to-do lists,
+// questions, and the assumptions-pane mod's note tool.
 const ALWAYS_ALLOWED = new Set([
   'ToolSearch',
+  'Agent',
+  'Task',
   'TodoWrite',
   'TaskCreate',
   'TaskUpdate',

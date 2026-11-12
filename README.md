@@ -82,7 +82,7 @@ and the rule that is enforced always match.
 
 | Key | Default | What it does |
 | --- | --- | --- |
-| `require_plan_first` | off | `true`: every other tool call is refused until Claude has called `plan_steps` (or written a to-do list) for the request. ToolSearch, the to-do tools, AskUserQuestion and the assumptions-pane mod's `log_assumption` are never refused. Starting a subagent (the Agent tool) is refused like any other tool; a subagent's own tool calls are never refused. `false`: never refused. `null`: use the option in `/config`. |
+| `require_plan_first` | off | `true`: every other tool call is refused until Claude has called `plan_steps` (or written a to-do list) for the request. ToolSearch, starting a subagent (the Agent tool, or its older name Task), the to-do tools, AskUserQuestion and the assumptions-pane mod's `log_assumption` are never refused, and neither are a subagent's own tool calls. `false`: never refused. `null`: use the option in `/config`. |
 
 The same switch is in `/config` as "Require a plan first" (off by default). A `true` or `false` in
 the file wins over it.

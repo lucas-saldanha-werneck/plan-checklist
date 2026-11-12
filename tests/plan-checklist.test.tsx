@@ -653,12 +653,14 @@ for (const surface of SURFACES) {
       expect(all).toContain('Write the summary')
     })
 
-    // As the README now says: starting a subagent is refused before a plan; a subagent's own calls are not.
-    test('PC-05: starting a subagent waits for the plan; its own tool calls are never refused', { options: { require_plan_first: true } }, async ($, on) => {
+    // As the README says: starting a subagent (Agent, or its older name Task) is never refused, nor are its own calls.
+    test('PC-05: starting a subagent is allowed before the plan; other tools still wait', { options: { require_plan_first: true } }, async ($, on) => {
       await boot($, on, { surface })
       await startJob($)
-      expect((await call($, { tool: 'Agent', prompt: 'x' })).deny).toContain('plan_steps')
+      expect((await call($, { tool: 'Agent', prompt: 'x' })).deny).toBeUndefined()
+      expect((await call($, { tool: 'Task', prompt: 'x' })).deny).toBeUndefined()
       expect((await call($, { tool: 'Bash', command: 'ls', agentId: 'a1' })).deny).toBeUndefined()
+      expect((await call($, { tool: 'Bash', command: 'ls' })).deny).toContain('plan_steps')
     })
 
     test('PC-08: a reply after "stuck" keeps the plan', async ($, on) => {

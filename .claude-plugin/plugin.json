@@ -1,6 +1,6 @@
 {
   "name": "plan-checklist",
-  "version": "0.3.7",
+  "version": "0.3.8",
   "description": "Claude's plan as a checklist in a side pane, ticked off as it works.",
   "author": {
     "name": "Lucas Saldanha Werneck",
@@ -15,7 +15,7 @@
     "require_plan_first": {
       "type": "boolean",
       "title": "Require a plan first",
-      "description": "Refuse every other tool call until Claude has called plan_steps for the request. Off by default. The require_plan_first key in ~/.config/plan-checklist/config.json, when true or false, wins over this.",
+      "description": "Refuse every other tool call (except tool loading, subagents, to-do lists and questions) until Claude has called plan_steps for the request. Off by default. The require_plan_first key in ~/.config/plan-checklist/config.json, when true or false, wins over this.",
       "default": false
     }
   }
