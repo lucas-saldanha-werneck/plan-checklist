@@ -787,7 +787,18 @@ for (const surface of SURFACES) {
       expect((await call($, { tool: REPORT, task: 'Read your notes', percent: 100 })).deny).toBeUndefined()
     })
 
-    for (const kind of ['composer', 'bridge', 'sdk']) {
+    test('a headless claude -p prompt (sdk) runs ungated, opens nothing and runs nothing', { ...GATE, plugins: [HOST] }, async ($, on) => {
+      on('session.surfaces', async () => ({ value: [] }) as never)
+      const world = await boot($, on, { surface })
+      await startJob($, 'Translate my resume', 'sdk')
+      expect((await call($, { tool: 'Bash', command: 'ls' })).deny).toBeUndefined()
+      await call($, { tool: PLAN, steps: ['Read it', 'Translate it'] })
+      await world.clock.advance(1)
+      expect(world.ran).toEqual([])
+      expect(world.opened).toEqual([])
+    })
+
+    for (const kind of ['composer', 'bridge']) {
       test(`a person's new request (${kind}) after All done still needs a plan`, GATE, async ($, on) => {
         await boot($, on, { surface })
         await done($)
