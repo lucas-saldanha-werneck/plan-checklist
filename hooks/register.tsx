@@ -101,7 +101,11 @@ let stackUnreachable = false
 // The person's last prompt came through Remote Control (phone or claude.ai), where no side pane
 // shows: a /stack run there would only wait in the chat as a queued prompt. Set from the origin of
 // prompts the person sends (composer = typed here, bridge = Remote Control); other origins leave it.
-let lastPromptFromRemote = false
+// null until the person sends one: then a plan made from a resumed summary or a hook's feedback
+// runs /stack only when no Remote Control client is attached.
+let lastPromptFromRemote: boolean | null = null
+// Surfaces that show a side pane; any other attached surface is a Remote Control client.
+const PANE_SURFACES: readonly string[] = ['terminal', 'desktop', 'vscode']
 // The session id this module last set up under. A /clear goes on under a new
 // id with no session.start, and session $.state (including `stacked`) is gone.
 let loadedSessionId: string | null = null
@@ -186,6 +190,16 @@ async function hasSurface($: EngineInterface): Promise<boolean> {
   }
 }
 
+/** Whether the person is likely reading from Remote Control, where a /stack run only queues in the chat. */
+async function readingRemotely($: EngineInterface): Promise<boolean> {
+  if (lastPromptFromRemote !== null) return lastPromptFromRemote
+  try {
+    return (await $.session.surfaces()).some(s => !PANE_SURFACES.includes(s))
+  } catch {
+    return false
+  }
+}
+
 async function ownPane($: EngineInterface): Promise<{ title: string } | undefined> {
   try {
     return (await $.ui.panes()).find(pane => pane.id === PANE)
@@ -256,7 +270,7 @@ async function showChecklist($: EngineInterface, asked = false): Promise<'stack'
     // the run with a second, empty result that takes the place of the real answer.
     if (!(await hasSurface($))) return 'stack'
     // From Remote Control the pane cannot show, so only an explicit /checklist runs /stack.
-    if (asked || (stackShown !== true && !lastPromptFromRemote)) bringStackForward($)
+    if (asked || (stackShown !== true && !(await readingRemotely($)))) bringStackForward($)
     return 'stack'
   }
   await openOwn($, asked)
