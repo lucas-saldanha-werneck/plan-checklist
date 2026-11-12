@@ -82,7 +82,7 @@ and the rule that is enforced always match.
 
 | Key | Default | What it does |
 | --- | --- | --- |
-| `require_plan_first` | off | `true`: every other tool call is refused until Claude has called `plan_steps` (or written a to-do list) for the request. ToolSearch, starting a subagent (the Agent tool, or its older name Task), the to-do tools, AskUserQuestion and the assumptions-pane mod's `log_assumption` are never refused, and neither are a subagent's own tool calls. `false`: never refused. `null`: use the option in `/config`. |
+| `require_plan_first` | off | `true`: every other tool call is refused until Claude has called `plan_steps` (or written a to-do list) for the person's request. Only a prompt the person sends (typed here, from Remote Control, or the `claude -p` prompt) starts a request; a turn that starts by itself (a background task's notification, a Stop hook's feedback, a plugin's prompt, a schedule, another session's message, a message typed during an earlier turn) goes on with the current plan, or runs unchecked when there is none. ToolSearch, starting a subagent (the Agent tool, or its older name Task), the to-do tools, AskUserQuestion and the assumptions-pane mod's `log_assumption` are never refused, and neither are a subagent's own tool calls. `false`: never refused. `null`: use the option in `/config`. |
 
 The same switch is in `/config` as "Require a plan first" (off by default). A `true` or `false` in
 the file wins over it.
@@ -104,14 +104,16 @@ new session start):
   `side-stack:plan-checklist` and puts it in the empty slot side-stack leaves for it
   (`side-stack:slot:plan-checklist`); with an older side-stack that leaves no slot, the section goes
   on top of the ones loaded after it.
-- A new plan or `/checklist` runs `/stack` to bring the Stack pane forward when plan-checklist does
-  not know it to be open. Claude Code runs a plugin's command once the session is idle, so during a
-  turn the Stack pane may come up only when Claude finishes. If `/stack` is refused, the own pane
-  opens with the full checklist.
-- A new plan does not run `/stack` when the person reads from Remote Control (phone or claude.ai),
-  where the run would only wait in the chat: the last prompt came from there, or no prompt came yet
-  (a resumed summary, a hook's feedback) and a Remote Control client is attached. `/checklist`
-  still runs it. Headless runs (`claude -p`) never run it.
+- A new plan or `/checklist` brings the Stack pane forward when plan-checklist does not know it to
+  be open, with nothing in the chat: it counts its `showStack` value up, and side-stack (0.4.7 and
+  later) opens its pane and answers with the same number in its `shownFor`. In the terminal a pane
+  opened this way shows from 144 columns (110 once opened before). With an older side-stack, which
+  does not answer, it runs `/stack` instead, which shows as a prompt from this plugin and runs once
+  the session is idle; if that is refused, the own pane opens with the full checklist.
+- A new plan does not bring the pane forward when the person reads from Remote Control (phone or
+  claude.ai): the last prompt came from there, or no prompt came yet (a resumed summary, a hook's
+  feedback) and a Remote Control client is attached. `/checklist` still does. Headless runs
+  (`claude -p`) never do.
 - plan-checklist publishes `stacked` (true while it draws in the Stack pane) for side-stack to read.
 - side-stack not running, or gone: its own pane again.
 

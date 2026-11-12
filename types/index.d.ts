@@ -30,9 +30,11 @@ declare module 'claude-code' {
   interface PluginState {
     // checklist: the plan on screen. stacked: true while the checklist is drawn
     // as a section of the side-stack pane (side-stack reads it).
-    'plan-checklist': { checklist: PlanChecklist | null; stacked: boolean }
-    // side-stack's own flag. plan-checklist does not read it (it is session
-    // state, gone after /clear); declared so the tests' stand-in host can set it.
-    'side-stack': { present: boolean }
+    // showStack: counted up to ask side-stack (0.4.7+) to open its pane silently.
+    'plan-checklist': { checklist: PlanChecklist | null; stacked: boolean; showStack: number }
+    // side-stack's own values. present: not read here (session state, gone
+    // after /clear); declared so the tests' stand-in host can set it.
+    // shownFor: the last showStack number side-stack answered by opening its pane.
+    'side-stack': { present: boolean; shownFor: number }
   }
 }
