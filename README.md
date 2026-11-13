@@ -3,6 +3,7 @@
 [![CI](https://github.com/lucas-saldanha-werneck/plan-checklist/actions/workflows/test.yml/badge.svg)](https://github.com/lucas-saldanha-werneck/plan-checklist/actions/workflows/test.yml)
 [![License](https://img.shields.io/github/license/lucas-saldanha-werneck/plan-checklist)](LICENSE)
 [![Version](https://img.shields.io/badge/version-0.3.11-blue)](CHANGELOG.md)
+[![plugin score (proposal)](https://img.shields.io/badge/plugin%20score%20(proposal)-98.0%20A-brightgreen)](https://github.com/NVIDIA/SkillEvaluator/issues/508)
 
 A Claude Code mod that shows Claude's plan as a short checklist in a side pane and ticks each step
 off as Claude works. You see where the job stands ("Plan 2/4") without reading tool calls.
