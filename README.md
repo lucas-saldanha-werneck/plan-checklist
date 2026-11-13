@@ -87,6 +87,16 @@ and the rule that is enforced always match.
 The same switch is in `/config` as "Require a plan first" (off by default). A `true` or `false` in
 the file wins over it.
 
+## Examples
+
+- You ask for a landing page. Claude calls `plan_steps({ "steps": ["Read your brand notes", "Build
+  the pricing section", "Add the contact form", "Polish the footer"] })` and the pane shows
+  the four steps.
+- As it works, Claude calls `report_progress({ "task": "Build the pricing section", "percent": 60 })`:
+  the bar moves, and at 100 the step is ticked and the next one starts.
+- You type `/checklist` to open the pane at any width, or `/clear` to empty it.
+- Claude ends its turn before the last step: the title reads `Plan · paused`.
+
 ## Works alone or inside side-stack
 
 Claude Code shows separate panes as tabs, one at a time. The side-stack mod opens one shared pane so
