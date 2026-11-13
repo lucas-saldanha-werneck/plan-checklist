@@ -1,7 +1,21 @@
 # plan-checklist
 
+[![CI](https://github.com/lucas-saldanha-werneck/plan-checklist/actions/workflows/test.yml/badge.svg)](https://github.com/lucas-saldanha-werneck/plan-checklist/actions/workflows/test.yml)
+[![License](https://img.shields.io/github/license/lucas-saldanha-werneck/plan-checklist)](LICENSE)
+[![Version](https://img.shields.io/badge/version-0.3.11-blue)](CHANGELOG.md)
+
 A Claude Code mod that shows Claude's plan as a short checklist in a side pane and ticks each step
 off as Claude works. You see where the job stands ("Plan 2/4") without reading tool calls.
+
+[![plan-checklist demo: tap to open the video](https://github.com/user-attachments/assets/70d5ab70-c902-49df-be0b-27317ab021e9)](https://lucas-saldanha-werneck.github.io/plan-checklist/demo.mp4)
+
+<table>
+<tr>
+<td align="center"><img src="https://github.com/user-attachments/assets/461fd873-d4be-4dbb-becf-43a3f4a8b894" alt="The plan checklist in a terminal, step 1 of 4 done" width="320"><br>In the terminal</td>
+<td align="center"><img src="https://github.com/user-attachments/assets/82791ef9-855a-4e16-8d71-0eb2d9657a24" alt="The plan checklist in the Claude desktop app" width="320"><br>In the desktop app</td>
+<td align="center"><img src="https://github.com/user-attachments/assets/8f876d75-8e83-4b77-9471-7d65a08174f8" alt="Summary: always know where the job stands" width="320"><br>The idea in short</td>
+</tr>
+</table>
 
 Works alone or inside side-stack: on its own it opens its own pane; when the
 [side-stack](https://github.com/lucas-saldanha-werneck/side-stack) mod runs, the checklist becomes one
@@ -170,3 +184,7 @@ from the "Plain Answers" mod in the AI LABS video
 MIT. See `LICENSE`.
 
 Built with Claude Code
+
+## Security
+
+See [SECURITY.md](SECURITY.md) for how to report a vulnerability and what this plugin accesses.
