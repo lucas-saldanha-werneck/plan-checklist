@@ -4,11 +4,11 @@ Versions are the `version` in `.claude-plugin/plugin.json`. Newest first.
 
 ## 0.3.11 (2026-11-13)
 
-- Add README Examples section and bump patch version.
+- README: add an Examples section.
 
 ## 0.3.10 (2026-11-12)
 
-- Headless claude -p prompts run ungated.
+- Headless `claude -p` prompts run ungated.
 
 ## 0.3.9 (2026-11-12)
 
@@ -20,7 +20,9 @@ Versions are the `version` in `.claude-plugin/plugin.json`. Newest first.
 
 ## 0.3.7 (2026-11-12)
 
-- Fix second audit findings.
+- A prompt after a paused plan starts a new plan; a new plan after All done shows as work in progress.
+- A TodoWrite counts only after the tool accepted it, with at least one item.
+- A step reopened with TaskUpdate starts again from 0%.
 
 ## 0.3.6 (2026-11-11)
 
@@ -28,11 +30,11 @@ Versions are the `version` in `.claude-plugin/plugin.json`. Newest first.
 
 ## 0.3.5 (2026-11-11)
 
-- Point to the catalog repo's new name, lucas-tools.
+- Point to the catalog repo's new name, `lucas-tools`.
 
 ## 0.3.4 (2026-11-11)
 
-- Rename the marketplace to lucas-tools.
+- Catalog renamed to `lucas-tools`.
 
 ## 0.3.3 (2026-11-11)
 
@@ -44,7 +46,7 @@ Versions are the `version` in `.claude-plugin/plugin.json`. Newest first.
 
 ## 0.3.1 (2026-11-09)
 
-- Polish: one-line description, catalog install, README headings.
+- One-line description, catalog install steps, README headings.
 
 ## 0.3.0 (2026-11-09)
 
@@ -56,9 +58,10 @@ Versions are the `version` in `.claude-plugin/plugin.json`. Newest first.
 
 ## 0.2.0 (2026-11-09)
 
-- Review fixes and side-stack protocol v2.
+- Side-stack protocol v2: present only with its live /stack command; runs /stack on a new plan.
+- `report_progress` refuses empty or unknown step names and calls before a plan.
+- `/clear` empties the checklist; subagent calls to the plan tools are no-ops.
 
 ## 0.1.0 (2026-11-09)
 
 - Plan checklist side pane, works alone or inside side-stack.
-
