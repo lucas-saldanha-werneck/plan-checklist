@@ -1,6 +1,6 @@
 {
   "name": "plan-checklist",
-  "version": "0.3.10",
+  "version": "0.3.11",
   "description": "Claude's plan as a checklist in a side pane, ticked off as it works.",
   "author": {
     "name": "Lucas Saldanha Werneck",
