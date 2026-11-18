@@ -6,6 +6,7 @@ import type {
   PlanTask as Task,
   Register,
   ResolveInput,
+  MatchedHook,
 } from 'claude-code'
 
 import { CONFIG_EXAMPLE } from './config-example'
@@ -569,6 +570,50 @@ async function drawChecklist<E extends ResolveInput>($: EngineInterface, e: E, c
 
 // ---- Hooks ---------------------------------------------------------------
 
+// True when the tree already holds this mod's section: the other of the two
+// registrations below drew it first (a build where both match), so it is drawn once.
+function hasSection(node: unknown): boolean {
+  if (node === null || typeof node !== 'object') return false
+  const el = node as { props?: { key?: unknown }; children?: unknown }
+  if (el.props?.key === SECTION_KEY) return true
+  return Array.isArray(el.children) && el.children.some(hasSection)
+}
+
+// With the side-stack host: a section in its shared pane, then every other section beneath.
+// Claude Code 2.1.327+ hears only a plugin's own drawings unless the matcher
+// names `plugin` ("*" = every plugin's); side-stack opens this pane, so the
+// first matcher is the one that runs there. Older builds know no `plugin` key
+// on a Pane and run the second; each build runs exactly one of the two.
+const drawInStack: MatchedHook<'ui.render', { component: 'Pane'; requestId: typeof STACK_PANE }> = async ($, e, next) => {
+  const { Box } = $.ui.resolve(e)
+  const below = await next(e)
+  if (hasSection(below)) return below
+  stackShown = true
+  $.clock.after(0, () => void followSession($).catch(() => undefined))
+  let section
+  try {
+    section = await drawChecklist($, e, Math.max(20, e.props.bodyColumns))
+  } catch {
+    // A broken section must never hide the others.
+    return below
+  }
+  // side-stack orders the sections: it leaves an empty slot keyed for this mod
+  // where it wants the section. With no slot, the section goes on top as before.
+  const keyed = (
+    <Box key={SECTION_KEY} flexDirection="column">
+      {section}
+    </Box>
+  )
+  const filled = fillSlot(below, keyed)
+  if (filled !== undefined) return filled as typeof below
+  return (
+    <Box flexDirection="column">
+      {keyed}
+      {below}
+    </Box>
+  )
+}
+
 export const register: Register = (on, options) => {
   optionRequirePlanFirst = options?.require_plan_first === true
 
@@ -883,33 +928,6 @@ export const register: Register = (on, options) => {
     return result
   }).catch(($, e, next) => next(e))
 
-  // With the side-stack host: a section in its shared pane, then every other section beneath.
-  on('ui.render', { component: 'Pane', requestId: STACK_PANE }, async ($, e, next) => {
-    const { Box } = $.ui.resolve(e)
-    const below = await next(e)
-    stackShown = true
-    $.clock.after(0, () => void followSession($).catch(() => undefined))
-    let section
-    try {
-      section = await drawChecklist($, e, Math.max(20, e.props.bodyColumns))
-    } catch {
-      // A broken section must never hide the others.
-      return below
-    }
-    // side-stack orders the sections: it leaves an empty slot keyed for this mod
-    // where it wants the section. With no slot, the section goes on top as before.
-    const keyed = (
-      <Box key={SECTION_KEY} flexDirection="column">
-        {section}
-      </Box>
-    )
-    const filled = fillSlot(below, keyed)
-    if (filled !== undefined) return filled as typeof below
-    return (
-      <Box flexDirection="column">
-        {keyed}
-        {below}
-      </Box>
-    )
-  })
+  on('ui.render', { component: 'Pane', requestId: STACK_PANE, plugin: '*' }, drawInStack)
+  on('ui.render', { component: 'Pane', requestId: STACK_PANE }, drawInStack)
 }
