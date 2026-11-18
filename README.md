@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/lucas-saldanha-werneck/plan-checklist/actions/workflows/test.yml/badge.svg)](https://github.com/lucas-saldanha-werneck/plan-checklist/actions/workflows/test.yml)
 [![License](https://img.shields.io/github/license/lucas-saldanha-werneck/plan-checklist)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.3.11-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.4.0-blue)](CHANGELOG.md)
 [![plugin score (proposal)](https://img.shields.io/badge/plugin%20score%20(proposal)-98.0%20A-brightgreen)](https://github.com/NVIDIA/SkillEvaluator/issues/508)
 
 A Claude Code mod that shows Claude's plan as a short checklist in a side pane and ticks each step
@@ -25,19 +25,23 @@ section of that shared pane instead.
 This sketch shows roughly how the pane looks in a terminal. It is not a screenshot:
 
 ```
-Plan 1/4
-Build my landing page · 1m 12s
-✓ Read your brand notes      ██████████  Done
-▶ Build the pricing section  ██████░░░░  60%
-○ Add the contact form       ░░░░░░░░░░  Next
-○ Polish the footer          ░░░░░░░░░░  Up next
+Plan 1/4 · 1m 12s ─────────────────────
+✓ Read your brand notes
+▶ Build the pricing section ██████░░░░ 60%
+○ Add the contact form
+○ Polish the footer
 ```
 
-The first line of the checklist, and the pane's tab title, follow the plan: `Plan 2/4` while Claude
+✓ is done, ▶ is the step Claude is on (‖ while paused), ○ is still to do. Only the current step has a
+bar: the surface's own progress bar on Claude Code 2.1.327 and later, a text bar before.
+
+The heading of the checklist, and the pane's tab title, follow the plan: `Plan 2/4` while Claude
 works, `Plan · needs you` when Claude waits for your OK or has a question, `Plan · paused` when
 Claude ended its turn before the last step, `Plan · stuck`, `Plan · stopped` after Esc, and
 `Plan · done`. Claude Code draws a pane's tab title only while more than one pane is open, so the
-same words are always on the checklist's first line too.
+same words are always on the checklist's heading too, followed by the time the job has taken
+(`Plan · done · 1m 2s`). A dim line under it says why Claude stopped (`Claude stopped before the last
+step`, `Stopped with Esc`, or what Claude needs from you).
 
 ## What Claude sees
 
@@ -78,8 +82,8 @@ desktop app's local Code sessions.
   window is at least 144 columns wide (110 if you have opened it before).
 - `/checklist` opens it at any width. With side-stack running, the checklist is in the side-stack
   pane instead.
-- When every step is done and the turn ends, the list shows "All done" and shrinks to one line after
-  5 seconds. The next prompt starts a new plan.
+- When every step is done and the turn ends, the heading says `Plan · done` with the time, and the
+  list shrinks to that one line after 5 seconds. The next prompt starts a new plan.
 - When the turn ends with steps left (`Plan · paused`), the next prompt also starts a new plan, since
   it may be about something else: Claude calls `plan_steps` again (with the remaining steps if it goes
   on with the old job). A reply while the plan is `stuck` (after an error, a refusal or a "no" to a
@@ -123,14 +127,14 @@ new session start):
 
 - side-stack running: no pane of its own (it closes one it had opened, or shows one line there,
   "Shown in the Stack pane (/stack)", so the list never shows twice). The checklist is a section of
-  the side-stack pane, headed `Plan 2/4`, with the other mods' sections (assumptions-pane,
+  the side-stack pane, headed `Plan 2/4 · 1m 5s`, with the other mods' sections (assumptions-pane,
   idea-shelf, clean-view) beneath or above it. side-stack decides the order: install order by
   default, changeable with `/stack order`. plan-checklist draws its section keyed
   `side-stack:plan-checklist` and puts it in the empty slot side-stack leaves for it
   (`side-stack:slot:plan-checklist`); with an older side-stack that leaves no slot, the section goes
   on top of the ones loaded after it.
-- A new plan or `/checklist` brings the Stack pane forward when plan-checklist does not know it to
-  be open, with nothing in the chat: it counts its `showStack` value up, and side-stack (0.4.7 and
+- A new plan or `/checklist` brings the Stack pane forward when `$.ui.panes()` does not list it, with
+  nothing in the chat: it counts its `showStack` value up, and side-stack (0.4.7 and
   later) opens its pane and answers with the same number in its `shownFor`. In the terminal a pane
   opened this way shows from 144 columns (110 once opened before). With an older side-stack, which
   does not answer, it runs `/stack` instead, which shows as a prompt from this plugin and runs once
@@ -143,6 +147,13 @@ new session start):
 - side-stack not running, or gone: its own pane again.
 
 ## Terminal and desktop app
+
+**Terminal look and app look.** The drawing is split by surface: one look for the terminal, one for
+the apps (desktop, mobile, VS Code). Today both draw the same tree. Where each look lives, and how to
+change one without the other: side-stack's README,
+[Shared guest code, and where the terminal and app looks live](https://github.com/lucas-saldanha-werneck/side-stack#shared-guest-code-and-where-the-terminal-and-app-looks-live).
+This repo's `hooks/stack-guest.tsx` is a byte-identical copy of side-stack's (CI checks it): change
+it there first.
 
 The same code draws in both, and every test runs on both surfaces. What differs is Claude Code's
 own pane handling:

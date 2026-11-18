@@ -277,16 +277,18 @@ for (const surface of SURFACES) {
       expect(sixty.result).toBe('Progress noted: 60%.')
       for (const surface of ['terminal', 'desktop'] as const) {
         const all = (await paneTexts($, OWN_PANE, surface)).join('\n')
-        expect(all).toContain('██████░░░░')
+        // A Progress where the surface has one (2.1.327+), a text bar before.
+        expect(all).toMatch(/▶ Read your notes|██████░░░░/)
         expect(all).toContain('60%')
-        expect(all).toContain('Next')
-        expect(all).toContain('Up next')
+        // No labels: the icons carry the state.
+        expect(all).toContain('○ Build the page')
+        expect(all).not.toContain('Next')
       }
       await call($, { tool: REPORT, task: 'Read your notes', percent: 100 })
       const all = (await paneTexts($, OWN_PANE, surface)).join('\n')
-      expect(all).toContain('Done')
+      expect(all).toContain('✓ Read your notes')
       expect(all).toContain('▶')
-      expect(all).toContain('Working')
+      expect(all).not.toContain('Done')
     })
 
     test('the turn ending with every step done shows All done, then one line after 5 seconds', async ($, on) => {
@@ -295,7 +297,7 @@ for (const surface of SURFACES) {
       await call($, { tool: PLAN, steps: ['Read your notes', 'Build the page'] })
       await call($, { tool: REPORT, task: 'Build the page', percent: 100 })
       await $.turn.complete({ answer: 'Done.', durationMs: 10, isAborted: false, turnId: 't1', reason: 'answer' })
-      expect((await paneTexts($, OWN_PANE, surface)).join('\n')).toContain('All done')
+      expect((await paneTexts($, OWN_PANE, surface))[0]).toMatch(/^Plan · done · \d+s$/)
       await world.clock.advance(5000)
       const texts = await paneTexts($, OWN_PANE, surface)
       expect(texts.join('\n')).not.toContain('Build the page')
@@ -326,7 +328,9 @@ for (const surface of SURFACES) {
       await call($, { tool: PLAN, steps: ['Read your notes', 'Build the page'] })
       await $.turn.complete({ answer: 'Waiting.', durationMs: 10, isAborted: false, turnId: 't1', reason: 'answer' })
       expect(world.opened.at(-1)).toBe('plan-checklist:Plan · paused')
-      expect((await paneTexts($, OWN_PANE, surface)).join('\n')).toContain('Paused')
+      const texts = await paneTexts($, OWN_PANE, surface)
+      expect(texts[0]).toMatch(/^Plan · paused/)
+      expect(texts).toContain('Claude stopped before the last step')
       expect(planTitle(null)).toBe('Plan')
     })
 
@@ -415,7 +419,7 @@ for (const surface of SURFACES) {
       expect(JSON.stringify(ran)).toContain('Stack pane')
       for (const surface of ['terminal', 'desktop'] as const) {
         const texts = await paneTexts($, STACK_PANE, surface)
-        const heading = texts.findIndex(one => one === 'Plan 1/2')
+        const heading = texts.findIndex(one => one.startsWith('Plan 1/2 · '))
         const host = texts.findIndex(one => one.includes('HOST-AND-OTHERS'))
         expect(heading).toBe(0)
         expect(host > heading).toBe(true)
@@ -620,7 +624,7 @@ for (const surface of SURFACES) {
       await call($, { tool: PLAN, steps: ['Read your notes', 'Build the page'] })
       await $.session.end({ reason: 'clear', sessionId: 's1', resume: {} } as never)
       const all = (await paneTexts($, OWN_PANE, surface)).join('\n')
-      expect(all).toContain('No plan yet.')
+      expect(all).toContain('Plan · no plan')
       expect(all).not.toContain('Read your notes')
     })
   })
@@ -637,8 +641,9 @@ for (const surface of SURFACES) {
       await paused($)
       await startJob($, 'Translate my resume', 'composer', 't2')
       expect(world.opened.at(-1)).toBe('plan-checklist:Plan')
+      // A new job: the plan starts over (the prompt itself is not repeated in the pane).
       const all = (await paneTexts($, OWN_PANE, surface)).join('\n')
-      expect(all).toContain('Translate my resume')
+      expect(all).toContain('Understand your request')
       expect(all).not.toContain('Read your notes')
       const report = await call($, { tool: REPORT, task: 'Read your notes', percent: 100 })
       expect(report.deny).toContain('plan_steps')
@@ -815,7 +820,7 @@ for (const surface of SURFACES) {
         await call($, { tool: PLAN, steps: ['Read your notes', 'Build the page'] })
         expect(world.opened.filter(one => one.startsWith('plan-checklist:'))).toEqual([])
         expect(await stackedFlag($)).toBe('true')
-        expect((await paneTexts($, STACK_PANE, surface))[0]).toBe('Plan 0/2')
+        expect((await paneTexts($, STACK_PANE, surface))[0]).toMatch(/^Plan 0\/2 · \d+s$/)
       })
 
       test('/clear, new session id, no session.start, a prompt: the plan is back in the stack', { plugins: [COMMAND_ONLY_HOST, READER] }, async ($, on) => {
@@ -837,7 +842,7 @@ for (const surface of SURFACES) {
         expect(await stackedFlag($)).toBe('true')
         expect(world.opened.filter(one => one.startsWith('plan-checklist:'))).toEqual([])
         const texts = await paneTexts($, STACK_PANE, surface)
-        expect(texts[0]).toBe('Plan 0/2')
+        expect(texts[0]).toMatch(/^Plan 0\/2 · \d+s$/)
         expect(texts.join('\n')).toContain('Write the footer')
         expect(texts.join('\n')).not.toContain('Read your notes')
         expect(texts.some(t => t.includes('HOST-AND-OTHERS'))).toBe(true)
@@ -852,12 +857,12 @@ for (const surface of SURFACES) {
         expect(world.opened.filter(one => one.startsWith('plan-checklist:'))).toEqual([])
         const texts = await paneTexts($, STACK_PANE, surface)
         const above = texts.indexOf('OTHER-ABOVE')
-        const heading = texts.indexOf('Plan 0/2')
+        const heading = texts.findIndex(t => /^Plan 0\/2 · /.test(t))
         const below = texts.indexOf('OTHER-BELOW')
         expect(above).toBe(0)
         expect(heading > above).toBe(true)
         expect(below > heading).toBe(true)
-        expect(texts.filter(t => t === 'Plan 0/2').length).toBe(1)
+        expect(texts.filter(t => /^Plan 0\/2 · /.test(t)).length).toBe(1)
         const ui = await $.ui.mount({ plugin: 'plan-checklist', surface, ...STACK_PANE })
         expect(await ui.find({ key: 'side-stack:plan-checklist' })).toBeDefined()
         expect(await ui.find({ key: 'side-stack:slot:plan-checklist' })).toBeUndefined()
@@ -869,7 +874,7 @@ for (const surface of SURFACES) {
         await startJob($)
         await call($, { tool: PLAN, steps: ['Read your notes', 'Build the page'] })
         const texts = await paneTexts($, STACK_PANE, surface)
-        expect(texts[0]).toBe('Plan 0/2')
+        expect(texts[0]).toMatch(/^Plan 0\/2 · \d+s$/)
         expect(texts.indexOf('HOST-AND-OTHERS') > 0).toBe(true)
         const ui = await $.ui.mount({ plugin: 'plan-checklist', surface, ...STACK_PANE })
         expect(await ui.find({ key: 'side-stack:plan-checklist' })).toBeDefined()
@@ -878,3 +883,20 @@ for (const surface of SURFACES) {
     })
  })
 }
+
+// One render path for the terminal and one for the apps (stack-guest.tsx, lookOf):
+// today both draw the same section, and each must draw, own pane and Stack pane.
+test('the checklist draws on the terminal and on the desktop app, alone and in the Stack pane', { plugins: [HOST] }, async ($, on) => {
+  await boot($, on, { surface: 'terminal' })
+  await startJob($)
+  await call($, { tool: PLAN, steps: ['Read your notes', 'Build the page'] })
+  await call($, { tool: REPORT, task: 'Read your notes', percent: 40 })
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ plugin: 'plan-checklist', surface, ...STACK_PANE })
+    expect(await ui.find({ key: 'side-stack:plan-checklist' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^Plan 0\/2 · \d+s$/ })).toBeDefined()
+    expect(await ui.find({ text: /40%/ } as never)).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '○ Build the page' })).toBeDefined()
+    await ui.unmount()
+  }
+})
