@@ -6,7 +6,6 @@ import type {
   PlanTask as Task,
   Register,
   ResolveInput,
-  MatchedHook,
 } from 'claude-code'
 
 import { CONFIG_EXAMPLE } from './config-example'
@@ -15,7 +14,6 @@ import {
   HAS_QUESTION,
   KEEPS_FAILING,
   NEEDS_OK,
-  SECTION_KEY,
   REFUSED,
   SAID_NO,
   apiErrorSentence,
@@ -25,18 +23,18 @@ import {
   clampPercent,
   cleanName,
   errorKind,
-  fillSlot,
   formatDuration,
   isUserRejection,
   newTask,
   planTitle,
   settle,
 } from './plan'
+import { HOST_CHECKS_MS, STACKED_LINE, hasSection, hasSurface, heading, hostPresent, lookOf, notePrompt, placeSection, showStack } from './stack-guest'
+import type { Look, StackHook } from './stack-guest'
 
 // The pane this mod opens when it runs alone, and the shared pane of the
 // side-stack host, where it draws a section instead when the host runs.
 export const PANE = 'plan-checklist'
-export const STACK_PANE = 'side-stack'
 
 const checklistAtom = atom({ plugin: 'plan-checklist', key: 'checklist' } as const, null)
 // true while the checklist is drawn in the side-stack pane; side-stack reads it.
@@ -47,14 +45,12 @@ const showStackAtom = atom({ plugin: 'plan-checklist', key: 'showStack' } as con
 const shownForAtom = atom({ plugin: 'side-stack', key: 'shownFor' } as const, 0)
 
 const METER = 10
-const LABEL_COLUMNS = 7
+// The active row's figure after its bar: " 100%".
+const FIGURE_COLUMNS = 5
 const MAX_ROWS = 10
 const FAILS_BEFORE_STUCK = 3
 const COLLAPSE_AFTER_MS = 5000
-// Plugin load order is unknown: look for the host soon after start, and once more a second later.
-const HOST_CHECKS_MS = [100, 1100]
 const PANE_COLUMNS = 46
-const STACKED_LINE = 'Shown in the Stack pane (/stack)'
 
 // Tools that run before a plan exists, even with require_plan_first on: tool
 // loading, starting a subagent (Agent, or its older name Task), to-do lists,
@@ -103,16 +99,11 @@ let fileRequirePlanFirst: boolean | null = null
 // The gate as read at session start. It stays fixed for the session, so the
 // system prompt and the gate always agree; a changed file applies next session.
 let sessionRequirePlanFirst = false
-// The side-stack pane: true once drawn, false once closed, null when not known.
-let stackShown: boolean | null = null
 // Running /stack failed: the own pane shows the full checklist instead.
 let stackUnreachable = false
-// The person's last prompt came through Remote Control (phone or claude.ai), where no side pane
-// shows: a /stack run there would only wait in the chat as a queued prompt. Set from the origin of
-// prompts the person sends (composer = typed here, bridge = Remote Control); other origins leave it.
-// null until the person sends one: then a plan made from a resumed summary or a hook's feedback
-// runs /stack only when no Remote Control client is attached.
-let lastPromptFromRemote: boolean | null = null
+// Whether the person reads from Remote Control (phone or claude.ai), where no side pane shows, is
+// kept in stack-guest.tsx: notePrompt() is fed the origin of each prompt (composer = typed here,
+// bridge = Remote Control). Before the first prompt, an attached Remote Control client counts.
 // Where the next main-loop turn's prompt came from, set by prompt.submit for a prompt that starts a
 // turn of its own (no turnId) and used up by that turn's turn.start. null: no prompt.submit came
 // before the turn (a Stop hook's feedback, a continuation, a message typed during an earlier turn).
@@ -121,8 +112,6 @@ let nextTurnOrigin: string | null = null
 // host's prompt in claude -p, a background task's notification, a plugin's prompt, a schedule, a
 // peer session, an unclassified turn) goes on with the job or runs ungated, never starts one.
 const PERSON_ORIGINS: readonly string[] = ['composer', 'bridge']
-// Surfaces that show a side pane; any other attached surface is a Remote Control client.
-const PANE_SURFACES: readonly string[] = ['terminal', 'desktop', 'vscode']
 // The session id this module last set up under. A /clear goes on under a new
 // id with no session.start, and session $.state (including `stacked`) is gone.
 let loadedSessionId: string | null = null
@@ -131,10 +120,6 @@ const makeId = (): string => `s${Date.now().toString(36)}${(idCounter++).toStrin
 
 function toolName($: EngineInterface, name: string): string {
   return `mcp__${$.plugin.name}__${name}`
-}
-
-function requirePlanFirst(): boolean {
-  return sessionRequirePlanFirst
 }
 
 // ---- Settings file -------------------------------------------------------
@@ -185,37 +170,7 @@ async function loadSettings($: EngineInterface): Promise<void> {
 
 // ---- The side-stack host and the pane ------------------------------------
 
-/**
- * side-stack counts as there when its /stack command is listed, and only then.
- * Its `present` flag is session state, gone after a /clear, so it is not read.
- */
-async function hostPresent($: EngineInterface): Promise<boolean> {
-  try {
-    const commands = await $.command.list()
-    return commands.some(c => c.name === 'stack' && c.plugin?.split('@')[0] === 'side-stack')
-  } catch {
-    return false
-  }
-}
-
-async function hasSurface($: EngineInterface): Promise<boolean> {
-  // Headless runs (claude -p, robots) have no surface to draw on.
-  try {
-    return (await $.session.surfaces()).length > 0
-  } catch {
-    return true
-  }
-}
-
-/** Whether the person is likely reading from Remote Control, where a /stack run only queues in the chat. */
-async function readingRemotely($: EngineInterface): Promise<boolean> {
-  if (lastPromptFromRemote !== null) return lastPromptFromRemote
-  try {
-    return (await $.session.surfaces()).some(s => !PANE_SURFACES.includes(s))
-  } catch {
-    return false
-  }
-}
+// side-stack counts as there when its /stack command is listed (hostPresent, stack-guest.tsx).
 
 async function ownPane($: EngineInterface): Promise<{ title: string } | undefined> {
   try {
@@ -254,71 +209,38 @@ async function checkHost($: EngineInterface): Promise<boolean> {
       }
     }
   } else if (!now && was && (await read($, checklistAtom)) !== null) {
-    stackShown = null
     await openOwn($)
   }
   return now
 }
 
 /**
- * The old way, for a side-stack older than 0.4.7: run its /stack command. It shows
- * in the chat as a prompt from this plugin, waits until the session is idle and is
- * refused inside a hook the turn waits on. If it fails, the own pane shows the full
- * checklist instead.
+ * Makes the checklist visible: the Stack pane when side-stack runs, else the own pane.
+ * The Stack pane is asked for silently (stack-guest.tsx): never headless (a /stack run
+ * there ends the run with a second, empty result), and unless `asked` (an explicit
+ * /checklist) not while it is open or the person reads from Remote Control. A
+ * side-stack older than 0.4.7 answers nothing: then /stack runs, which shows in the
+ * chat as a prompt from this plugin; if that fails, the own pane shows the checklist.
  */
-async function runStack($: EngineInterface): Promise<void> {
-  try {
-    await $.command.run({ command: 'stack' })
-    stackUnreachable = false
-    stackShown = true
-  } catch {
-    stackUnreachable = true
-    await openOwn($)
-  }
-}
-
-/**
- * Asks side-stack to show its pane with nothing in the chat: counts `showStack`
- * up; side-stack opens its pane and writes the same number to `shownFor`. The
- * answer is read on a later tick; with none (an older side-stack), /stack runs.
- */
-function bringStackForward($: EngineInterface): void {
-  $.clock.after(0, () => {
-    void (async () => {
-      let ask = 0
-      try {
-        await update($, showStackAtom, n => (ask = (n ?? 0) + 1))
-      } catch {
-        ask = 0
-      }
-      $.clock.after(0, () => {
-        void (async () => {
-          let answered = false
-          try {
-            answered = ask > 0 && (await read($, shownForAtom)) === ask
-          } catch {
-            answered = false
-          }
-          if (answered) {
-            stackUnreachable = false
-            stackShown = true
-            return
-          }
-          await runStack($)
-        })()
-      })
-    })()
-  })
-}
-
-/** Makes the checklist visible: the Stack pane when side-stack runs, else the own pane. */
 async function showChecklist($: EngineInterface, asked = false): Promise<'stack' | 'own'> {
   if (await checkHost($)) {
-    // A headless run (claude -p, robots) has no pane, and a /stack run there ends
-    // the run with a second, empty result that takes the place of the real answer.
-    if (!(await hasSurface($))) return 'stack'
-    // From Remote Control the pane cannot show, so only an explicit /checklist runs /stack.
-    if (asked || (stackShown !== true && !(await readingRemotely($)))) bringStackForward($)
+    await showStack(
+      $,
+      {
+        ask: () => update($, showStackAtom, n => (n ?? 0) + 1),
+        answer: () => read($, shownForAtom),
+        fallback: async () => {
+          try {
+            await $.command.run({ command: 'stack' })
+            stackUnreachable = false
+          } catch {
+            stackUnreachable = true
+            await openOwn($)
+          }
+        },
+      },
+      asked,
+    )
     return 'stack'
   }
   await openOwn($, asked)
@@ -350,10 +272,7 @@ async function followSession($: EngineInterface): Promise<void> {
   const isFirst = loadedSessionId === null
   loadedSessionId = id
   if (isFirst) return
-  stackShown = null
   stackUnreachable = false
-  const now = await hostPresent($)
-  await update($, stackedAtom, () => now)
   await checkHost($)
 }
 
@@ -442,113 +361,86 @@ async function replaceTasks($: EngineInterface, tasks: Task[]): Promise<void> {
 
 // ---- Drawing -------------------------------------------------------------
 
-/** The checklist: a heading line, then one row per step (at most MAX_ROWS). */
-async function drawChecklist<E extends ResolveInput>($: EngineInterface, e: E, columns: number) {
-  const { Box, Text } = $.ui.resolve(e)
+/**
+ * The checklist: a heading with the state and time ("Plan 1/3 · 2m 5s"), a dim
+ * line when Claude stopped or needs the person, then one row per step (at most
+ * MAX_ROWS). ✓ done, ▶ working (‖ paused), ○ to do; only the working step has a
+ * bar: a Progress where the surface has one, a text bar otherwise (2.1.322).
+ * One view for both looks (terminal and app, see stack-guest.tsx).
+ */
+async function drawChecklist<E extends ResolveInput>($: EngineInterface, e: E, look: Look, columns: number) {
+  const table = $.ui.resolve(e)
+  const { Box, Text } = table
+  const Progress = 'Progress' in table ? table.Progress : undefined
   const list = await read($, checklistAtom)
-  const heading = planTitle(list)
 
-  let status = <Text dimColor>No plan yet.</Text>
-  if (list !== null) {
-    const end = list.finishedAt ?? (await $.clock.now())
-    const took = formatDuration(end - list.startedAt)
-    if (list.phase === 'working') {
-      status = (
-        <Text wrap="truncate-end">
-          <Text>{list.title}</Text>
-          <Text dimColor> · {took}</Text>
-        </Text>
-      )
-    } else if (list.phase === 'needsYou' && (list.needsYouReason ?? ENDED_EARLY) === ENDED_EARLY) {
-      status = (
-        <Text wrap="truncate-end">
-          <Text inverse bold> Paused </Text>
-          <Text dimColor> {ENDED_EARLY}</Text>
-        </Text>
-      )
-    } else if (list.phase === 'needsYou') {
-      status = (
-        <Text wrap="truncate-end">
-          <Text inverse bold color="yellow"> Needs you </Text>
-          <Text> {list.needsYouReason ?? ENDED_EARLY}</Text>
-        </Text>
-      )
-    } else if (list.phase === 'stuck') {
-      status = (
-        <Text wrap="truncate-end" color="yellow">
-          ⚠ Stuck: {list.stuckReason ?? KEEPS_FAILING}
-        </Text>
-      )
-    } else if (list.phase === 'stopped') {
-      status = (
-        <Text wrap="truncate-end">
-          ■ Stopped · {list.title} · <Text dimColor>you pressed Esc</Text>
-        </Text>
-      )
-    } else {
-      status = (
-        <Text wrap="truncate-end">
-          <Text color="green">✓ All done</Text> · {list.title} · <Text dimColor>took {took}</Text>
-        </Text>
-      )
-    }
+  if (list === null) {
+    return <Box flexDirection="column" width={columns}>{heading($, e, look, 'plan-checklist', 'Plan', 'no plan')}</Box>
+  }
+  const end = list.finishedAt ?? (await $.clock.now())
+  const took = formatDuration(end - list.startedAt)
+  const title = planTitle(list)
+  const head = heading($, e, look, 'plan-checklist', title, took)
+
+  let note: unknown = null
+  if (list.phase === 'needsYou' && (list.needsYouReason ?? ENDED_EARLY) === ENDED_EARLY) {
+    note = <Text key="plan-note" dimColor wrap="truncate-end">Claude stopped before the last step</Text>
+  } else if (list.phase === 'needsYou') {
+    note = <Text key="plan-note" color="warning" wrap="truncate-end">{list.needsYouReason ?? ENDED_EARLY}</Text>
+  } else if (list.phase === 'stuck') {
+    note = <Text key="plan-note" color="warning" wrap="truncate-end">⚠ {list.stuckReason ?? KEEPS_FAILING}</Text>
+  } else if (list.phase === 'stopped') {
+    note = <Text key="plan-note" dimColor wrap="truncate-end">Stopped with Esc</Text>
   }
 
-  const head = [
-    <Text key="plan-heading" bold wrap="truncate-end">
-      {heading}
-    </Text>,
-    <Box key="plan-status">{status}</Box>,
-  ]
-  if (list === null || (list.phase === 'done' && list.isCollapsed)) {
-    return (
-      <Box flexDirection="column" width={columns}>
-        {head}
-      </Box>
-    )
+  // Done: the heading alone says it ("Plan · done · 1m 2s"); the rows go after 5 s.
+  if (list.phase === 'done' && list.isCollapsed) {
+    return <Box flexDirection="column" width={columns}>{head}</Box>
   }
 
-  const nameColumns = Math.max(6, columns - 2 - 1 - METER - 2 - LABEL_COLUMNS)
-  const fit = (name: string): string =>
-    name.length > nameColumns ? `${name.slice(0, nameColumns - 1)}…` : name.padEnd(nameColumns, ' ')
-  const firstUpcoming = list.tasks.findIndex(task => task.status === 'upcoming')
   const isPaused = list.phase !== 'working'
-
-  const rows = list.tasks.slice(0, MAX_ROWS).map((task, i) => {
+  const rows = list.tasks.slice(0, MAX_ROWS).map(task => {
     if (task.status === 'done') {
       return (
         <Text key={task.id} wrap="truncate-end">
-          <Text color="green">✓ </Text>
-          <Text dimColor>{fit(task.name)} </Text>
-          <Text color="green">{'█'.repeat(METER)}</Text>
-          <Text dimColor>  Done</Text>
+          <Text color="success">✓ </Text>
+          <Text dimColor>{task.name}</Text>
         </Text>
       )
     }
     if (task.status === 'active') {
-      let meter: string
-      let label: string
-      if (task.hasReported) {
-        const filled = Math.max(0, Math.min(METER, Math.round(task.percent / 10)))
-        meter = '█'.repeat(filled) + '░'.repeat(METER - filled)
-        label = `${task.percent}%`
-      } else {
-        // A still bar: a moving one redraws the pane and swallows clicks in it.
-        meter = '▓▓▓' + '░'.repeat(METER - 3)
-        label = 'Working'
+      const icon = isPaused ? '‖ ' : '▶ '
+      if (Progress !== undefined) {
+        // The surface's own bar, its label the step. No report yet: running, no figure.
+        return task.hasReported ? (
+          <Progress key={task.id} label={`${icon}${task.name}`} value={task.percent} max={100} valueText={`${task.percent}%`} color="suggestion" />
+        ) : (
+          <Progress key={task.id} label={`${icon}${task.name}`} color="suggestion" />
+        )
       }
+      // No Progress (2.1.322): a text bar. A still one: a moving bar redraws the
+      // pane and swallows clicks in it.
+      const filled = task.hasReported ? Math.max(0, Math.min(METER, Math.round(task.percent / 10))) : 3
       return (
-        <Text key={task.id} wrap="truncate-end">
-          <Text color="cyan">{isPaused ? '‖ ' : '▶ '}</Text>
-          <Text bold>{fit(task.name)} </Text>
-          <Text color="cyan">{meter}</Text>
-          <Text>  {label}</Text>
-        </Text>
+        <Box key={task.id} flexDirection="row" gap={1}>
+          <Box flexGrow={1} flexShrink={1}>
+            <Text wrap="truncate-end">
+              <Text color="suggestion">{icon}</Text>
+              <Text bold>{task.name}</Text>
+            </Text>
+          </Box>
+          <Box width={METER + FIGURE_COLUMNS} flexShrink={0}>
+            <Text>
+              <Text color="suggestion">{(task.hasReported ? '█' : '▓').repeat(filled) + '░'.repeat(METER - filled)}</Text>
+              {task.hasReported ? ` ${task.percent}%` : ''}
+            </Text>
+          </Box>
+        </Box>
       )
     }
     return (
       <Text key={task.id} wrap="truncate-end" dimColor>
-        ○ {fit(task.name)} {'░'.repeat(METER)}  {i === firstUpcoming ? 'Next' : 'Up next'}
+        ○ {task.name}
       </Text>
     )
   })
@@ -563,6 +455,7 @@ async function drawChecklist<E extends ResolveInput>($: EngineInterface, e: E, c
   return (
     <Box flexDirection="column" width={columns}>
       {head}
+      {note as never}
       {rows}
     </Box>
   )
@@ -570,48 +463,17 @@ async function drawChecklist<E extends ResolveInput>($: EngineInterface, e: E, c
 
 // ---- Hooks ---------------------------------------------------------------
 
-// True when the tree already holds this mod's section: the other of the two
-// registrations below drew it first (a build where both match), so it is drawn once.
-function hasSection(node: unknown): boolean {
-  if (node === null || typeof node !== 'object') return false
-  const el = node as { props?: { key?: unknown }; children?: unknown }
-  if (el.props?.key === SECTION_KEY) return true
-  return Array.isArray(el.children) && el.children.some(hasSection)
-}
-
-// With the side-stack host: a section in its shared pane, then every other section beneath.
-// Claude Code 2.1.327+ hears only a plugin's own drawings unless the matcher
-// names `plugin` ("*" = every plugin's); side-stack opens this pane, so the
-// first matcher is the one that runs there. Older builds know no `plugin` key
-// on a Pane and run the second; each build runs exactly one of the two.
-const drawInStack: MatchedHook<'ui.render', { component: 'Pane'; requestId: typeof STACK_PANE }> = async ($, e, next) => {
-  const { Box } = $.ui.resolve(e)
-  const below = await next(e)
-  if (hasSection(below)) return below
-  stackShown = true
+// With the side-stack host: a section in its shared pane, then every other section
+// beneath. See stack-guest.tsx for the two registrations and the slot side-stack may leave.
+async function drawStacked<E extends ResolveInput & { props: { bodyColumns: number } }>($: EngineInterface, e: E, look: Look) {
   $.clock.after(0, () => void followSession($).catch(() => undefined))
-  let section
-  try {
-    section = await drawChecklist($, e, Math.max(20, e.props.bodyColumns))
-  } catch {
-    // A broken section must never hide the others.
-    return below
-  }
-  // side-stack orders the sections: it leaves an empty slot keyed for this mod
-  // where it wants the section. With no slot, the section goes on top as before.
-  const keyed = (
-    <Box key={SECTION_KEY} flexDirection="column">
-      {section}
-    </Box>
-  )
-  const filled = fillSlot(below, keyed)
-  if (filled !== undefined) return filled as typeof below
-  return (
-    <Box flexDirection="column">
-      {keyed}
-      {below}
-    </Box>
-  )
+  return drawChecklist($, e, look, Math.max(20, e.props.bodyColumns))
+}
+const drawInStack: StackHook = async ($, e, next) => {
+  const below = await next(e)
+  if (hasSection(below, 'plan-checklist')) return below
+  // A broken section must never hide the others.
+  return placeSection($, e, below, 'plan-checklist', await drawStacked($, e, lookOf(e.surface)).catch(() => null))
 }
 
 export const register: Register = (on, options) => {
@@ -621,7 +483,6 @@ export const register: Register = (on, options) => {
     await seedSettings($)
     await loadSettings($)
     sessionRequirePlanFirst = fileRequirePlanFirst ?? optionRequirePlanFirst
-    stackShown = null
     stackUnreachable = false
     loadedSessionId = await $.session.id().catch(() => null)
     await $.tool.register({
@@ -670,22 +531,21 @@ export const register: Register = (on, options) => {
     const result = await next(e)
     return {
       ...result,
-      sections: [...result.sections, { id: 'plan-checklist:guide', text: guide(requirePlanFirst()), scope: 'session' as const }],
+      sections: [...result.sections, { id: 'plan-checklist:guide', text: guide(sessionRequirePlanFirst), scope: 'session' as const }],
     }
   })
 
   on('command.run', { command: 'checklist' }, async $ => {
     await followSession($)
     const where = await showChecklist($, true)
-    return { text: where === 'stack' ? 'The checklist is in the Stack pane; opening it.' : 'Checklist opened.' }
+    return { text: where === 'stack' ? 'Stack pane opened.' : 'Checklist opened.' }
   })
 
   on('prompt.submit', async ($, e, next) => {
     await followSession($)
     lastSubmitWasCommand = e.command !== undefined
     const kind = (e as { origin?: { kind?: string } }).origin?.kind
-    if (kind === 'bridge') lastPromptFromRemote = true
-    else if (kind === 'composer') lastPromptFromRemote = false
+    notePrompt(kind)
     // Delivered into a running turn (turnId set): no turn of its own follows from it now.
     if ((e as { turnId?: string }).turnId === undefined) nextTurnOrigin = kind ?? 'unclassified'
     return next(e)
@@ -764,7 +624,7 @@ export const register: Register = (on, options) => {
     const list = await read($, checklistAtom)
     const isActive = list !== null && (list.phase === 'working' || list.phase === 'needsYou' || list.phase === 'stuck')
 
-    if (requirePlanFirst() && isActive && !list.isPlanned && !ALWAYS_ALLOWED.has(tool)) {
+    if (sessionRequirePlanFirst && isActive && !list.isPlanned && !ALWAYS_ALLOWED.has(tool)) {
       return {
         deny: `Plan checklist: call ${toolName($, 'plan_steps')} first with every step of the job in plain English (load it with ToolSearch if it is deferred), then try again.`,
       }
@@ -917,17 +777,9 @@ export const register: Register = (on, options) => {
       const { Text } = $.ui.resolve(e)
       return <Text dimColor>{STACKED_LINE}</Text>
     }
-    return drawChecklist($, e, Math.max(20, e.props.bodyColumns))
+    return drawChecklist($, e, lookOf(e.surface), Math.max(20, e.props.bodyColumns))
   })
 
-  // The side-stack pane closing: the next plan brings it forward again. Only
-  // watched; the close always goes on.
-  on('ui.close', { id: STACK_PANE }, async ($, e, next) => {
-    const result = await next(e)
-    stackShown = false
-    return result
-  }).catch(($, e, next) => next(e))
-
-  on('ui.render', { component: 'Pane', requestId: STACK_PANE, plugin: '*' }, drawInStack)
-  on('ui.render', { component: 'Pane', requestId: STACK_PANE }, drawInStack)
+  on('ui.render', { component: 'Pane', requestId: 'side-stack', plugin: '*' }, drawInStack)
+  on('ui.render', { component: 'Pane', requestId: 'side-stack' }, drawInStack)
 }
