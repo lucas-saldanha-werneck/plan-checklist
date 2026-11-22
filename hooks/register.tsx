@@ -774,6 +774,8 @@ export const register: Register = (on, options) => {
     // A render may not write state: a session change is followed from a timer.
     $.clock.after(0, () => void followSession($).catch(() => undefined))
     if ((await read($, stackedAtom)) === true && !stackUnreachable) {
+      // Opened before side-stack loaded: close the stray pane from a timer (a render may not close).
+      $.clock.after(0, () => void checkHost($).catch(() => undefined))
       const { Text } = $.ui.resolve(e)
       return <Text dimColor>{STACKED_LINE}</Text>
     }
